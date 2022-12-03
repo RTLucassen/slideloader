@@ -18,6 +18,7 @@ Utility class for loading and tiling whole slide images.
 
 import os
 import math
+import pydicom
 import wsidicom
 import numpy as np
 import matplotlib.pyplot as plt
@@ -643,7 +644,7 @@ class DicomSlideLoader():
         # resolution as (x, y) in micrometer / pixel  
         # dimensions as (row, column) in pixels
         self.__properties = {
-            'vendor': None,
+            'vendor': pydicom.dcmread(sorted(paths)[0])[0x0008,0x0070].value,
             'native_resolution': (mpp.width, mpp.height), 
             'native_magnification': native_magnification,
             'magnification_levels': magnification_levels,
