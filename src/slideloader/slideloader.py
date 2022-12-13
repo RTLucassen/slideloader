@@ -86,6 +86,7 @@ class SlideLoader():
     def load_slide(self, paths: Union[str, list[str]]) -> None:
         """
         Load whole slide image slide.
+        
         Args:
             path: path to whole slide image.
         """
@@ -167,6 +168,7 @@ class SlideLoader():
             channels_last: specifies if the channels dimension of the output tensor is last.
                            if False, the channels dimension is the second dimension.
             include_partial_tiles: specifies if partial tiles at the border are included.
+        
         Returns:
             tiles: whole slide image tiles with RGB color channels as 
                    (tile, row, column, channel).
@@ -623,6 +625,9 @@ class DicomSlideLoader():
         Args:
             path: path to whole slide image.
         """
+        # add path to list
+        if isinstance(paths, str):
+            paths = [paths]
         # initialize instance variable with path to slide and load the slide
         self.__slide = wsidicom.WsiDicom.open(paths)
 
