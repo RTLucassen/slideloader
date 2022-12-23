@@ -1,2 +1,4 @@
 slideloader_venv
 __pycache__
+*.egg-info
+test.py
