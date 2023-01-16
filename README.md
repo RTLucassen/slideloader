@@ -1,8 +1,8 @@
-# Slideloader
-*Slideloader* is a Python package for loading and tiling whole slide images (WSIs). The aim is to provide a unified interface for loading WSIs in DICOM format using the [wsidicom](https://github.com/imi-bigpicture/wsidicom) library and for other formats using the [OpenSlide](https://github.com/openslide) library.
+# SlideLoader
+*SlideLoader* is a Python package for loading and tiling whole slide images (WSIs). The aim is to provide a unified interface for loading WSIs in DICOM format using the [wsidicom](https://github.com/imi-bigpicture/wsidicom) library and for other formats using the [OpenSlide](https://github.com/openslide) library.
 
-## Installing *Slideloader*
-*Slideloader* can be installed from GitHub:
+## Installing *SlideLoader*
+*SlideLoader* can be installed from GitHub:
 ```console
 $ pip install git+https://github.com/RTLucassen/slideloader
 ```
@@ -12,7 +12,7 @@ OPENSLIDE_PATH = r'C:\Users\user\path\to\openslide-win64-20221111\bin'
 ```
 
 ## Example
-A minimal example of how *Slideloader* can be used for loading WSIs.
+A minimal example of how *SlideLoader* can be used for loading WSIs.
 ```
 from slideloader import SlideLoader
 
