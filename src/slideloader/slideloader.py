@@ -25,6 +25,7 @@ import matplotlib.pyplot as plt
 import concurrent.futures
 from typing import Any, Union
 from tqdm import tqdm
+from pathlib import Path
 from math import ceil, floor
 from skimage import img_as_ubyte
 from skimage.transform import resize
@@ -35,7 +36,7 @@ OPENSLIDE_PATH = None
 if hasattr(os, 'add_dll_directory'):
     # Python >= 3.8 on Windows
     if OPENSLIDE_PATH is None:
-        raise IOError('Specify the path to the OpenSlide bin folder.')
+        raise FileNotFoundError('Specify the path to the OpenSlide bin folder.')
     else:
         with os.add_dll_directory(OPENSLIDE_PATH):
             import openslide
@@ -73,7 +74,7 @@ class SlideLoader():
         for key in settings:
             self.__settings[key] = settings[key]
 
-        # initialize slide loader objects for non-dicom and dicom images
+        # initialize slide loader objects for non-DICOM and DICOM images
         self.__openslide_loader = OpenSlideLoader(
             self.__settings, 
             multithreading,
@@ -83,39 +84,36 @@ class SlideLoader():
             multithreading,
         )
 
-    def load_slide(self, paths: Union[str, list[str]]) -> None:
+    def load_slide(self, paths: Union[str, Path, tuple, list]) -> None:
         """
         Load whole slide image slide.
         
         Args:
             path: path to whole slide image.
         """
-        # check if only a single path was specified
-        if isinstance(paths, str):
-            extension = os.path.splitext(paths)[1]
-            # check if the extension is from a dicom image
-            if extension == '.dcm':
-                self.__dicom = True
-                self.__dicomslide_loader.load_slide(paths)
-            else:
-                self.__dicom = False
-                self.__openslide_loader.load_slide(paths)
-        elif not len(paths):
+        # format paths
+        if isinstance(paths, (str, Path)):
+            paths = [paths]
+        paths = [Path(path) for path in paths]
+
+        # check if the paths are valid
+        if not len(paths):
              raise ValueError('No paths were provided.')
         elif len(paths) == 1:
-            extension = os.path.splitext(paths[0])[1]
-            # check if the extension is from a dicom image
-            if extension == '.dcm':
+            path = paths[0]
+            # check if the extension is from a DICOM image
+            if path.suffix == '.dcm':
                 self.__dicom = True
-                self.__dicomslide_loader.load_slide(paths[0])
+                self.__dicomslide_loader.load_slide(path)
             else:
                 self.__dicom = False
-                self.__openslide_loader.load_slide(paths[0])
+                self.__openslide_loader.load_slide(path)
         elif len(paths) != len(set(paths)):
             raise ValueError('Duplicate paths were provided.')
+        # only DICOM images should be provided as multiple paths
         else:
-            cases = set([os.path.split(path)[1].split('.')[0] for path in paths])
-            extensions = set([os.path.splitext(path)[1] for path in paths])
+            cases = set([path.name.split('.')[0] for path in paths])
+            extensions = set([path.suffix for path in paths])
             if len(extensions) > 1:
                 raise ValueError('At least two paths end with different file types.')
             elif extensions.pop() != '.dcm':
@@ -283,7 +281,7 @@ class OpenSlideLoader():
         """
         # check if a slide has been loaded
         if self.__slide is None:
-            raise AssertionError('A slide must be loaded first.')
+            raise ValueError('A slide must be loaded first.')
         
         # check if the specified magnification is valid
         upper_threshold = (self.__properties['native_magnification'] * 
@@ -380,7 +378,7 @@ class OpenSlideLoader():
         """
         # check if a slide has been loaded
         if self.__slide is None:
-            raise AssertionError('A slide must be loaded first.')
+            raise ValueError('A slide must be loaded first.')
     
         # check if the specified magnification is valid
         upper_threshold = (self.__properties['native_magnification'] * 
@@ -676,7 +674,7 @@ class DicomSlideLoader():
         """
         # check if a slide has been loaded
         if self.__slide is None:
-            raise AssertionError('A slide must be loaded first.')
+            raise ValueError('A slide must be loaded first.')
         
         # check if the specified magnification is valid
         upper_threshold = (self.__properties['native_magnification'] * 
@@ -774,7 +772,7 @@ class DicomSlideLoader():
         """
         # check if a slide has been loaded
         if self.__slide is None:
-            raise AssertionError('A slide must be loaded first.')
+            raise ValueError('A slide must be loaded first.')
         
         # check if the specified magnification is valid
         upper_threshold = (self.__properties['native_magnification'] * 
