@@ -13,24 +13,24 @@
 #    limitations under the License.
 
 """
-Utility class for loading and tiling whole slide images.
+Utility class for loading whole slide images (WSIs) and reading tiles.
+The aim is to provide a unified interface for loading WSIs in DICOM format using 
+the wsidicom library and for other formats using the OpenSlide library.
 """
 
 import os
-import math
 import pydicom
 import wsidicom
 import numpy as np
-import matplotlib.pyplot as plt
 import concurrent.futures
-from typing import Any, Union
 from tqdm import tqdm
 from pathlib import Path
-from math import ceil, floor
+from math import floor, ceil, log2
 from skimage import img_as_ubyte
 from skimage.transform import resize
+from typing import Any, Union, Sequence
 
-OPENSLIDE_PATH = None
+OPENSLIDE_PATH = r'C:\app\openslide-win64-20221111\bin'
 
 # import openslide
 if hasattr(os, 'add_dll_directory'):
@@ -46,47 +46,40 @@ else:
 
 class SlideLoader():
     """
-    Class for loading and tiling whole slide images (WSIs).
+    Class for loading whole slide images and reading tiles.
     """
 
     __settings = {
-        'inspection_mode': False,
-        'progress_bar': True,
-        'extraction_tile_shape': (1024, 1024),
-        'percentual_diff_threshold': 0.01,
+        'multithreading': True,
+        'progress_bar': False,
+        'chunk_shape': (1024, 1024),
+        'max_difference': 0.025,
         'anti-aliasing': False,
         'interpolation_order': 2,
     }
 
-    def __init__(
-        self,
-        settings: dict[str, Any] = {}, 
-        multithreading: bool = True
-    ) -> None:
+    def __init__(self, settings: dict[str, Any] = {}) -> None:
         """
         Args:
-            settings: dictionary with names of settings and values.
+            settings: dictionary with names of settings and corresponding values.
                       default values are used for each setting if unspecified.
-            multithreading: indicates if tiles are loaded using multithreading.
         """
         # configure settings
-        self.__dicom = False
         for key in settings:
             self.__settings[key] = settings[key]
 
         # initialize slide loader objects for non-DICOM and DICOM images
         self.__openslide_loader = OpenSlideLoader(
             self.__settings, 
-            multithreading,
         )
         self.__dicomslide_loader = DicomSlideLoader(            
             self.__settings, 
-            multithreading,
         )
+        self.__loader = None
 
-    def load_slide(self, paths: Union[str, Path, tuple, list]) -> None:
+    def load_slide(self, paths: Union[str, Path, Sequence[Union[str, Path]]]) -> None:
         """
-        Load whole slide image slide.
+        Load whole slide image.
         
         Args:
             path: path to whole slide image.
@@ -103,11 +96,11 @@ class SlideLoader():
             path = paths[0]
             # check if the extension is from a DICOM image
             if path.suffix == '.dcm':
-                self.__dicom = True
                 self.__dicomslide_loader.load_slide(path)
+                self.__loader = self.__dicomslide_loader
             else:
-                self.__dicom = False
                 self.__openslide_loader.load_slide(path)
+                self.__loader = self.__openslide_loader
         elif len(paths) != len(set(paths)):
             raise ValueError('Duplicate paths were provided.')
         # only DICOM images should be provided as multiple paths
@@ -118,116 +111,121 @@ class SlideLoader():
                 raise ValueError('At least two paths end with different file types.')
             elif extensions.pop() != '.dcm':
                 raise ValueError(('Only multiple paths to the same DICOM image '
-                    'at different magnifications can be loaded in at once.'))
+                    'at different magnifications can be loaded at once.'))
             elif len(cases) > 1:
-                raise ValueError('At least two paths are from different DICOM images.')
+                raise ValueError('Atleast two paths are from different DICOM images.')
             else:
-                self.__dicom = True
                 self.__dicomslide_loader.load_slide(paths)
+                self.__loader = self.__dicomslide_loader
 
-    def get_properties(self) -> dict:
-        if self.__dicom:
-            return self.__dicomslide_loader.get_properties()
-        else:
-            return self.__openslide_loader.get_properties()
+    def get_properties(self) -> dict[str, Any]:
+        return self.__loader.get_properties()
     
+    def get_dimensions(self, magnification: float) -> tuple[int, int]:
+        """
+        Return the dimensions of the whole slide image at the specified magnification.
+        """
+        return self.__loader.get_dimensions(magnification)
+
+    def get_tile(
+        self, 
+        magnification: float, 
+        location: tuple[int, int],
+        shape: tuple[int, int] = (256, 256), 
+        channels_last: bool = True,
+    ) -> np.ndarray:
+        """
+        Get a tile from the whole slide image based on the specified
+        magnification, location, and shape.
+        
+        Args:
+            magnification: magnification at which the whole slide image is loaded.
+            location: location of top left pixel as (x, y) at the specified magnification.
+            shape: shape of the tile in pixels as (height, width).
+            channels_last: specifies if the channels dimension of the output tensor is last.
+                           if False, the channels dimension is the second dimension.
+        Returns:
+            tile: whole slide image tile [uint8] as (height, width, channel) 
+                  for channels last or (channel, height, width) for channels first.
+        """
+        return self.__loader.get_tile(magnification, location, shape, channels_last)
+
+    def get_tiles(
+        self, 
+        magnification: float, 
+        locations: list[tuple[int, int]],
+        shapes: Union[tuple[int, int], list[tuple[int, int]]] = (256, 256), 
+        channels_last: bool = True,
+    ) -> list[np.ndarray]:
+        """
+        Get one or more tiles from the whole slide image based on the specified 
+        magnification, location, and shape. The tiles are read using multithreading 
+        if this was enabled in the settings.
+
+        Args:
+            magnification: magnification at which the whole slide image is loaded.
+            locations: locations of top left pixel as (x, y) at the specified magnification.
+            shapes: shape of the tiles in pixels as (height, width).
+            channels_last: specifies if the channels dimension of the output tensor is last.
+                           if False, the channels dimension is the second dimension.
+        Returns:
+            tile: whole slide image tiles [uint8] as (height, width, channel) 
+                  for channels last or (channel, height, width) for channels first.
+        """
+        return self.__loader.get_tiles(magnification, locations, shapes, channels_last)
+
     def get_image(
         self, 
         magnification: float, 
         channels_last: bool = True,
     ) -> np.ndarray:
         """
+        Get the whole slide image at the specified magnification.     
+
         Args:
-            magnification: magnification at which the image is loaded.
+            magnification: magnification at which the whole slide image is loaded.
             channels_last: indicates if the channels dimension should be last.
                            if False, the channels dimension is the second dimension.
         Returns:
-            image: whole slide image [uint8] in grayscale or with RGB color 
-                   channels as (row, column, channel) by default.
-        """
-        if self.__dicom:
-            return self.__dicomslide_loader.get_image(magnification, channels_last)
-        else:
-            return self.__openslide_loader.get_image(magnification, channels_last)
+            image: whole slide image [uint8] as (height, width, channel) 
+                   for channels last or as (channel, height, width) for channels first.
+        """ 
+        return self.__loader.get_image(magnification, channels_last)
 
-    def get_tiles(
-        self, 
-        magnification: float, 
-        tile_shape: tuple = (256, 256), 
-        overlap: tuple = (0.0, 0.0),  
-        channels_last: bool = True,
-        include_partial_tiles: bool = True,
-    ) -> np.ndarray:
-        """
-        Args:
-            magnification: magnification at which the image is loaded.
-            tile_shape: shape of tile in pixels as (row, column).
-            overlap: overlap faction between extracted tiles as (row, column).
-            channels_last: specifies if the channels dimension of the output tensor is last.
-                           if False, the channels dimension is the second dimension.
-            include_partial_tiles: specifies if partial tiles at the border are included.
-        
-        Returns:
-            tiles: whole slide image tiles with RGB color channels as 
-                   (tile, row, column, channel).
-            information: tile information containing the position as (row, column)
-                         and pixel locations of top left corner as (x, y).
-        """
-        if self.__dicom:
-            return self.__dicomslide_loader.get_tiles(
-                magnification,
-                tile_shape,
-                overlap,
-                channels_last,
-                include_partial_tiles,
-            )
-        else:
-            return self.__openslide_loader.get_tiles(
-                magnification,
-                tile_shape,
-                overlap,
-                channels_last,
-                include_partial_tiles,
-            )
 
 class OpenSlideLoader():
     """
-    Class for loading and tiling whole slide images (WSIs) 
-    using the OpenSlide ImageSlide class.
+    Class for loading whole slide images (WSIs) and reading tiles using the 
+    OpenSlide ImageSlide class.
     """
 
     __settings = {
-        'inspection_mode': False,
-        'progress_bar': True,
-        'extraction_tile_shape': (1024, 1024),
-        'percentual_diff_threshold': 0.01,
+        'multithreading': True,
+        'progress_bar': False,
+        'chunk_shape': (1024, 1024),
+        'max_difference': 0.025,
         'anti-aliasing': False,
         'interpolation_order': 2,
     }
 
-    def __init__(
-        self,
-        settings: dict[str, Any] = {}, 
-        multithreading: bool = True
-    ) -> None:
+    def __init__(self, settings: dict[str, Any] = {}) -> None:
         """
         Args:
-            settings: dictionary with names of settings and values.
+            settings: dictionary with names of settings and corresponding values.
                       default values are used for each setting if unspecified.
-            multithreading: indicates if tiles are loaded using multithreading.
         """
         # initialize instance attributes
         self.__slide = None
         self.__properties = None
 
         # configure settings
-        self.__multithreading = multithreading
         for key in settings:
             self.__settings[key] = settings[key]  
 
-    def load_slide(self, path: str) -> None:
+    def load_slide(self, path: Union[str, Path]) -> None:
         """
         Load whole slide image slide.
+
         Args:
             path: path to whole slide image.
         """
@@ -249,7 +247,7 @@ class OpenSlideLoader():
             dimensions.append(tuple(list(dimension)[::-1]))
 
         # resolution as (x, y) in micrometer / pixel  
-        # dimensions as (row, column) in pixels
+        # dimensions as (height, width) in pixels
         self.__properties = {
             'vendor': self.__slide.properties['openslide.vendor'],
             'native_resolution': (                                     
@@ -262,142 +260,37 @@ class OpenSlideLoader():
             'dimensions': dimensions,    
         }   
 
-    def get_properties(self) -> dict:
+    def get_properties(self) -> dict[str, Any]:
         return self.__properties
-
-    def get_image(
-        self, 
-        magnification: float, 
-        channels_last: bool = True,
-    ) -> np.ndarray:
-        """
-        Args:
-            magnification: magnification at which the image is loaded.
-            channels_last: indicates if the channels dimension should be last.
-                           if False, the channels dimension is the second dimension.
-        Returns:
-            image: whole slide image [uint8] in grayscale or with RGB color 
-                   channels as (row, column, channel) by default.
-        """
-        # check if a slide has been loaded
-        if self.__slide is None:
-            raise ValueError('A slide must be loaded first.')
-        
-        # check if the specified magnification is valid
-        upper_threshold = (self.__properties['native_magnification'] * 
-            (1+self.__settings['percentual_diff_threshold']))
-        if magnification < 0 or magnification > upper_threshold:
-            message = ('The argument for `magnification` is invalid '
-                       '(`magnification` must be in between 0.0 and '
-                       f'{upper_threshold:0.3f}x).')
-            raise ValueError(message)
-        
-        # check the difference between the requested magnification and 
-        # the magnifications available in the pyramid image
-        percentual_diff = []
-        for mag_level in self.__properties['magnification_levels']:
-            percentual_diff.append(abs((magnification-mag_level)/mag_level))
-        
-        # check if the smallest difference can be considered negligible
-        if min(percentual_diff) < self.__settings['percentual_diff_threshold']:
-            level = percentual_diff.index(min(percentual_diff))
-            selected_magnification = magnification
-            correction_factor = 1
-        else:
-            # get the best downsample level for resizing the image 
-            # to the desired magnification level
-            downsample_factor = self.__properties['native_magnification']/magnification
-            level = self.__slide.get_best_level_for_downsample(downsample_factor)
-            selected_magnification = self.__properties['magnification_levels'][level]
-            correction_factor = magnification/selected_magnification
-        
-        # load the downsampled image from the pyramid representation if available
-        if correction_factor == 1:
-            # load the entire image at the specified downsample level
-            image = self.__slide.read_region(
-                location=(0,0),
-                level=level, 
-                size=tuple(list(self.__properties['dimensions'][level])[::-1]),
-            )
-            # remove the alpha channel if present
-            image = np.array(image)[..., 0:3]
-        else:
-            # extract tiles from the image at the requested magnification
-            tiles, information = self.get_tiles(
-                magnification=magnification, 
-                tile_shape=self.__settings['extraction_tile_shape'],
-                include_partial_tiles=True,
-                overlap=(0,0)
-            )
-            length_y, length_x = information['tile_shape']
-            # stitch the tiles together to obtain full image
-            image = np.zeros((
-                length_y*(information['positions'][-1][0]+1), 
-                length_x*(information['positions'][-1][1]+1), 
-                3), dtype=np.uint8
-            )
-            # add values of tiles to image
-            for i, tile in enumerate(tiles):
-                top_left_x, top_left_y = information['locations'][i]
-                bottom_left_y = top_left_y+length_y
-                top_right_x = top_left_x+length_x
-                image[top_left_y:bottom_left_y, top_left_x:top_right_x] = tile
-            # remove the zero-padding added to partial tiles
-            image = image[
-                :np.count_nonzero(np.sum(image, axis=(1,2))), 
-                :np.count_nonzero(np.sum(image, axis=(0,2))),
-            ]
-
-        # change position of channels dimension
-        if not channels_last:
-            image = np.transpose(image, (2,0,1))
-
-        return image           
-
-    def get_tiles(
-        self, 
-        magnification: float, 
-        tile_shape: tuple = (256, 256), 
-        overlap: tuple = (0.0, 0.0),  
-        channels_last: bool = True,
-        include_partial_tiles: bool = True,
-    ) -> np.ndarray:
-        """
-        Args:
-            magnification: magnification at which the image is loaded.
-            tile_shape: shape of tile in pixels as (row, column).
-            overlap: overlap faction between extracted tiles as (row, column).
-            channels_last: specifies if the channels dimension of the output tensor is last.
-                           if False, the channels dimension is the second dimension.
-            include_partial_tiles: specifies if partial tiles at the border are included.
-        Returns:
-            tiles: whole slide image tiles with RGB color channels as 
-                   (tile, row, column, channel).
-            information: tile information containing the position as (row, column)
-                         and pixel locations of top left corner as (x, y).
-        """
-        # check if a slide has been loaded
-        if self.__slide is None:
-            raise ValueError('A slide must be loaded first.')
     
-        # check if the specified magnification is valid
-        upper_threshold = (self.__properties['native_magnification'] * 
-            (1+self.__settings['percentual_diff_threshold']))
-        if magnification < 0 or magnification > upper_threshold:
-            message = ('The argument for `magnification` is invalid '
-                       '(`magnification` must be in between 0.0 and '
-                       f'{upper_threshold:0.3f}x).')
-            raise ValueError(message)
-        
+    def get_dimensions(self, magnification: float) -> tuple[int, int]:
+        """
+        Return the dimensions of the whole slide image at the specified magnification.
+        """
+        # determine the best level and correction factor
+        level, correction_factor = self.__best_level_and_correction(magnification)
+        # get the dimensions at the level and apply the correction
+        dimensions = self.__properties['dimensions'][level]
+        corrected_dimensions = (
+            floor(dimensions[0]/correction_factor),
+            floor(dimensions[1]/correction_factor),
+        )
+        return corrected_dimensions
+
+    def __best_level_and_correction(self, magnification: float) -> tuple[float, float]:
+        """
+        Determine the best level of the image pyramid for getting tiles and
+        calculate the correction factor for resizing to the exact magnification.
+        """
         # check the difference between the requested magnification and 
-        # the magnifications available in the pyramid image
-        percentual_diff = []
-        for mag_level in self.__properties['magnification_levels']:
-            percentual_diff.append(abs((magnification-mag_level)/mag_level))
+        # the magnifications available in the whole slide image
+        abs_differences = []
+        for magnification_level in self.__properties['magnification_levels']:
+            abs_differences.append(abs(magnification-magnification_level))
 
         # check if the smallest difference can be considered negligible
-        if min(percentual_diff) < self.__settings['percentual_diff_threshold']:
-            level = percentual_diff.index(min(percentual_diff))
+        if min(abs_differences) < self.__settings['max_difference']:
+            level = abs_differences.index(min(abs_differences))
             correction_factor = 1
         else:
             # get the best downsample level for resizing the image
@@ -406,220 +299,333 @@ class OpenSlideLoader():
                 self.__properties['native_magnification']/magnification,
             )
             # calculate the correction factor 
-            correction_factor = self.__properties['magnification_levels'][level]/magnification
-        
-        # correct the tile shape if necessary
-        if correction_factor == 1:
-            corrected_tile_shape = tile_shape
-        else:
-            corrected_tile_shape = (
-                tile_shape[0]*correction_factor, 
-                tile_shape[1]*correction_factor,
-            )         
-        # get the image dimensions at the specified magnification level
-        dimensions = self.__properties['dimensions'][level]
-        # calculate the downsample factor
-        downsample_factor = (self.__properties['native_magnification'] /
-            self.__properties['magnification_levels'][level])
-        # calculate the stride for both spatial dimensions
-        stride = (
-            corrected_tile_shape[0]*(1-overlap[0]), 
-            corrected_tile_shape[1]*(1-overlap[1])
-        )
-        
-        # calculate the number of tiles in each row and column
-        if include_partial_tiles:
-            tiles_per_row = ceil(dimensions[0]/stride[0])
-            tiles_per_column = ceil(dimensions[1]/stride[1])
-        else:
-            tiles_per_row = floor((dimensions[0]-corrected_tile_shape[0])/stride[0])
-            tiles_per_column = floor((dimensions[1]-corrected_tile_shape[1])/stride[1])
-        N_tiles = tiles_per_row * tiles_per_column
-       
-        # initialize lists with the position (row, column) 
-        positions = []
-        for row in range(tiles_per_row):
-            for column in range(tiles_per_column):
-                positions.append((row, column))
-        
-        locations = []
-        native_locations = []
-        for position in positions:
-            # add location of the top left pixel (x, y) for all tiles to a list
-            locations.append(
-                (round(position[1]*stride[1]/correction_factor),
-                round(position[0]*stride[0]/correction_factor)),
-            )
-            # add location of the top left pixel (x, y) for all tiles to a list
-            # in the native magnification image
-            native_locations.append(
-                (round(position[1]*stride[1]*downsample_factor),
-                round(position[0]*stride[0]*downsample_factor)),
+            correction_factor = (
+                self.__properties['magnification_levels'][level]/magnification
             )
 
-        # store tile information in a dictionary 
-        information = {
-            'tile_shape': tile_shape, 
-            'locations': locations, 
-            'positions': positions,
-        }
-
-        if self.__multithreading:
-            # prepare tile reading function for multi-threading
-            read_tile = lambda native_location: self.__read_tile(
-                level=level, 
-                tile_shape=tile_shape, 
-                native_location=native_location, 
-                corrected_tile_shape=corrected_tile_shape, 
-                correction_factor=correction_factor, 
-                add_axis=True,
-            )
-            # use multithreading for speedup in loading tiles
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                # convert the clips to separate frames
-                if self.__settings['progress_bar']:
-                    collected_tiles = tqdm(
-                        executor.map(read_tile, native_locations), 
-                        total=N_tiles,
-                    )
-                else:
-                    collected_tiles = executor.map(read_tile, native_locations)
-                # save retrieved tiles in allocated memory
-                tiles = np.concatenate(list(collected_tiles), axis=0)
-        else:
-            # allocate memory to store tiles in array
-            tiles = np.zeros((N_tiles, tile_shape[0], tile_shape[1], 3), dtype=np.uint8)
-
-            if self.__settings['progress_bar']:
-                tile_iterator = tqdm(range(N_tiles))
-            else:
-                tile_iterator = range(N_tiles)
-
-            for i in tile_iterator:
-                # load the image tile at the specified magnification level
-                tile = self.__read_tile(
-                    level=level, 
-                    tile_shape=tile_shape, 
-                    native_location=native_locations[i], 
-                    corrected_tile_shape=corrected_tile_shape, 
-                    correction_factor=correction_factor,
-                )
-                tiles[i, ...] = tile
-                
-        if self.__settings['inspection_mode']:
-            # allocate memory for creating the inspection image
-            inspection_image = np.zeros((
-                round((tiles_per_row-1)*stride[0]/correction_factor+tile_shape[0]),
-                round((tiles_per_column-1)*stride[1]/correction_factor+tile_shape[1]), 
-                3,
-            ))
-            print('Shape of inspection image: ', inspection_image.shape, '\n')
-
-            for i in range(N_tiles):
-                # retrieve the tile
-                tile = tiles[i, ...] 
-                # retrieve the coordinate of the top left pixel
-                top_left_x, top_left_y = information['locations'][i] 
-                # add the tile to the inspection image
-                inspection_image[top_left_y:top_left_y+tile_shape[0], 
-                                 top_left_x:top_left_x+tile_shape[1], :] += tile
-
-            # show inspection image
-            plt.imshow(inspection_image/np.max(inspection_image, axis=(0,1)))
-            plt.show()   
-
-        # change position of channels dimension
-        if not channels_last:
-            tiles = np.transpose(tiles, (0,3,1,2))
-        
-        return tiles, information
+        return level, correction_factor
 
     def __read_tile(
         self, 
         level: int, 
-        tile_shape: tuple,
-        native_location: tuple, 
-        corrected_tile_shape: tuple,
         correction_factor: float,
-        add_axis: bool = False
+        native_location: tuple[int, int], 
+        shape: tuple[int, int],
     ) -> np.ndarray:
         """
-        Read tile from pyramid image.
+        Read a tile from the whole slide image.
         
         Args:
-            native_location: location of top left pixel (x, y) in the native magnification image.
             level: downsample level used for loading the tile.
-            tile_shape: shape of tile in pixels as (row, column).
-            corrected_tile_shape: shape of tile in the native magnification image in pixels as (row, column).
-            correction_factor: best magnification (to downsample from) divided by the selected magnification. 
-            add_axis: specifies if an additional axis in the first position should be added.
+            correction_factor: best magnification (to downsample from) divided by 
+                               the specified magnification. 
+            native_location: location of top left pixel as (x, y) at the native magnification.
+            shape: shape of tile in pixels as (height, width) at the specified magnification.
+
         Returns:
-            tile: extracted image tile.
+            tile: whole slide image tile.
         """
+        # correct the tile shape if necessary
+        if correction_factor == 1:
+            corrected_shape = (shape[1], shape[0])
+        else:
+            corrected_shape = (
+                round(shape[1]*correction_factor), 
+                round(shape[0]*correction_factor),
+            )
         # load the image tile at the specified magnification level
         tile = self.__slide.read_region(
             location=native_location, 
             level=level, 
-            size=(
-                round(corrected_tile_shape[1]), 
-                round(corrected_tile_shape[0]),
-            ),
+            size=corrected_shape,
         )
         tile = np.array(tile)[..., 0:3]
+        
         # resize the tile if necessary
         if correction_factor != 1:
             tile = resize(
                 image=tile, 
-                output_shape=tile_shape, 
+                output_shape=shape, 
                 anti_aliasing=self.__settings['anti-aliasing'], 
                 order=self.__settings['interpolation_order'],
             )
             tile = img_as_ubyte(tile)
-        # add additional axis in the first position
-        if add_axis:
-            tile = tile[None, ...]
+        
+        # remove first axis if necessary
+        if len(tile.shape) == 4:
+            tile = tile[0, ...]
         
         return tile
+
+    def get_tile(
+        self, 
+        magnification: float, 
+        location: tuple[int, int],
+        shape: tuple[int, int] = (256, 256), 
+        channels_last: bool = True,
+    ) -> np.ndarray:
+        """
+        Get a tile from the whole slide image based on the specified
+        magnification, location, and shape.
+        
+        Args:
+            magnification: magnification at which the whole slide image is loaded.
+            location: location of top left pixel as (x, y) at the specified magnification.
+            shape: shape of the tile in pixels as (height, width).
+            channels_last: specifies if the channels dimension of the output tensor is last.
+                           if False, the channels dimension is the second dimension.
+        Returns:
+            tile: whole slide image tile [uint8] as (height, width, channel) 
+                  for channels last or (channel, height, width) for channels first.
+        """
+        # the method for getting multiple tiles is used for getting only one tile
+        tile = self.get_tiles(magnification, [location], shape, channels_last)[0]
+        
+        return tile
+
+    def get_tiles(
+        self, 
+        magnification: float, 
+        locations: list[tuple[int, int]],
+        shapes: Union[tuple[int, int], list[tuple[int, int]]] = (256, 256), 
+        channels_last: bool = True,
+    ) -> list[np.ndarray]:
+        """
+        Get one or more tiles from the whole slide image based on the specified 
+        magnification, location, and shape. The tiles are read using multithreading 
+        if this was enabled in the settings.
+
+        Args:
+            magnification: magnification at which the whole slide image is loaded.
+            locations: locations of top left pixel as (x, y) at the specified magnification.
+            shape: shape of the tile in pixels as (height, width).
+            channels_last: specifies if the channels dimension of the output tensor is last.
+                           if False, the channels dimension is the second dimension.
+        Returns:
+            tile: whole slide image tiles [uint8] as (height, width, channel) 
+                  for channels last or (channel, height, width) for channels first.
+        """
+        # check if a slide has been loaded
+        if self.__slide is None:
+            raise ValueError('A slide must be loaded first.')
+    
+        # check if the specified magnification is valid
+        upper_threshold = (self.__properties['native_magnification'] + 
+                           self.__settings['max_difference'])
+        if not (0.0 < magnification <= upper_threshold):
+            message = ('The argument for `magnification` is invalid '
+                       '(`magnification` must be in between 0.0 and '
+                       f'{upper_threshold:0.3f}x).')
+            raise ValueError(message)
+        
+        # determine the best level and correction factor
+        level, correction_factor = self.__best_level_and_correction(magnification)
+
+        # check if locations is a list 
+        if not isinstance(locations, list):
+            raise TypeError('The argument for `locations` must be a list of tuples.')
+        # check if atleast one position was provided
+        if not len(locations):
+            return []     
+        # check if a single shape was provided 
+        if not isinstance(shapes, list):
+            shapes = [shapes]
+        # if only one shape was provided, duplicate the shape for each location
+        if len(shapes) == 1:
+            shapes *= len(locations)
+        # check if the number of shapes and locations are equal
+        elif len(shapes) != len(locations):
+            raise ValueError('The number of tile shapes and location are unequal.')
+  
+        # calculate the downsample factor
+        downsample_factor = self.__properties['native_magnification']/magnification
+
+        native_locations = []
+        # loop over combinations of tile location and shapes
+        for location, shape in zip(locations, shapes):
+            # check if the specified tile location and shape are valid
+            dimensions = self.__properties['dimensions'][level]
+            if not (0 <= round(location[0]*correction_factor) <= dimensions[1]):
+                raise ValueError('Top left location is invalid.')
+            if not (0 <= round(location[1]*correction_factor) <= dimensions[0]):
+                raise ValueError('Top left location is invalid.')
+            if not (0 <= round((location[0]+shape[1])*correction_factor) <= dimensions[1]):
+                raise ValueError('Bottom right location is invalid.')
+            if not (0 <= round((location[1]+shape[0])*correction_factor) <= dimensions[0]):
+                raise ValueError('Bottom right location is invalid.')
+            
+            # calculate native locations
+            native_locations.append((
+                round(location[0]*downsample_factor),
+                round(location[1]*downsample_factor),
+            ))
+
+        # only use multithreading in case of more than one tile
+        N_tiles = len(locations)
+        if self.__settings['multithreading'] and N_tiles > 1:
+            # prepare tile reading function for multithreading
+            read_tile = lambda native_location, shape: self.__read_tile(
+                level=level, 
+                native_location=native_location,
+                shape=shape,  
+                correction_factor=correction_factor,
+            )
+            # use multithreading for speedup in loading tiles
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                if self.__settings['progress_bar']:
+                    tiles = list(tqdm(
+                        executor.map(read_tile, native_locations, shapes), 
+                        total=N_tiles,
+                    ))
+                else:
+                    tiles = list(executor.map(read_tile, native_locations, shapes))
+        else:
+            # define tile iterator
+            tile_iterator = zip(native_locations, shapes)
+            if self.__settings['progress_bar']:
+                tile_iterator = tqdm(tile_iterator, total=N_tiles)  
+
+            tiles = []
+            for native_location, shape in tile_iterator:
+                # load the image tiles at the specified magnification level
+                tiles.append(
+                    self.__read_tile(
+                        level=level,
+                        native_location=native_location, 
+                        shape=shape,
+                        correction_factor=correction_factor,
+                    ),
+                )
+        # change position of channels dimension
+        if not channels_last:
+            tiles = [np.transpose(tile, (2,0,1)) for tile in tiles]
+
+        return tiles
+
+    def get_image(
+        self, 
+        magnification: float, 
+        channels_last: bool = True,
+    ) -> np.ndarray:
+        """
+        Get the whole slide image at the specified magnification.        
+        
+        Args:
+            magnification: magnification at which the whole slide image is loaded.
+            channels_last: indicates if the channels dimension should be last.
+                           if False, the channels dimension is the second dimension.
+        Returns:
+            image: whole slide image [uint8] as (height, width, channel) 
+                   for channels last or as (channel, height, width) for channels first.
+        """ 
+        # check if a slide has been loaded
+        if self.__slide is None:
+            raise ValueError('A slide must be loaded first.')
+        
+        # check if the specified magnification is valid
+        upper_threshold = (self.__properties['native_magnification'] + 
+                           self.__settings['max_difference'])
+        if not (0.0 < magnification <= upper_threshold):
+            message = ('The argument for `magnification` is invalid '
+                       '(`magnification` must be in between 0.0 and '
+                       f'{upper_threshold:0.3f}x).')
+            raise ValueError(message)
+        
+        # determine the best level and correction factor
+        level, correction_factor = self.__best_level_and_correction(magnification)
+
+        # determine the final image size
+        height, width = self.get_dimensions(magnification)
+
+        # check if the magnification value is valid
+        if height <= 0 or width <= 0:
+            raise ValueError('The argument for `magnification` is too small.')
+        
+        # load the image from the exact image pyramid level if available
+        if ((magnification < min(self.__properties['magnification_levels'])) or 
+            (correction_factor == 1)):
+            # load the entire image at the specified downsample level
+            image = self.__slide.read_region(
+                location=(0,0),
+                level=level, 
+                size=tuple(list(self.__properties['dimensions'][level])[::-1]),
+            )
+            # remove the alpha channel if present
+            image = np.array(image)[..., 0:3]
+
+            # resize the image to the desired shape
+            if magnification < min(self.__properties['magnification_levels']):
+                image = resize(
+                    image=image, 
+                    output_shape=(height, width), 
+                    anti_aliasing=self.__settings['anti-aliasing'], 
+                    order=self.__settings['interpolation_order'],
+                )
+                image = img_as_ubyte(image)
+        else:
+            # determine locations and shapes of tiles
+            chunk_shape = self.__settings['chunk_shape']
+            locations = []
+            shapes = []
+            for y in range(ceil(height/chunk_shape[0])):
+                for x in range(ceil(width/chunk_shape[1])):
+                    locations.append((x*chunk_shape[1], y*chunk_shape[0]))
+                    shapes.append((
+                        min(height, (y+1)*chunk_shape[0])-(y*chunk_shape[0]),
+                        min(width, (x+1)*chunk_shape[1])-(x*chunk_shape[1]),
+                    ))
+            # get tiles from the image at the requested magnification
+            tiles = self.get_tiles(
+                magnification=magnification, 
+                locations=locations,
+                shapes=shapes,
+            )
+            # stitch the tiles together to obtain full image
+            image = np.zeros((height, width, 3), dtype=np.uint8)
+            # add values of tiles to image
+            for (x, y), shape, tile in zip(locations, shapes, tiles):
+                image[y:y+shape[0], x:x+shape[1], :] = tile
+
+        # change position of channels dimension
+        if not channels_last:
+            image = np.transpose(image, (2,0,1))
+
+        return image   
 
 
 class DicomSlideLoader():
     """
-    Class for loading and tiling DICOM whole slide images (WSIs) 
-    using the WsiDicom class from the wsidicom package.
+    Class for loading and tiling DICOM whole slide images (WSIs) using the 
+    WsiDicom class from the wsidicom package.
     """
 
     __settings = {
-        'inspection_mode': False,
-        'progress_bar': True,
-        'extraction_tile_shape': (1024, 1024),
-        'percentual_diff_threshold': 0.01,
+        'multithreading': True,
+        'progress_bar': False,
+        'chunk_shape': (1024, 1024),
+        'max_difference': 0.025,
         'anti-aliasing': False,
         'interpolation_order': 2,
     }
 
-    def __init__(
-        self,
-        settings: dict[str, Any] = {}, 
-        multithreading: bool = True
-    ) -> None:
+    def __init__(self, settings: dict[str, Any] = {}) -> None:
         """
         Args:
-            settings: dictionary with names of settings and values.
+            settings: dictionary with names of settings and corresponding values.
                       default values are used for each setting if unspecified.
-            multithreading: indicates if tiles are loaded using multithreading.
         """
         # initialize instance attributes
         self.__slide = None
         self.__properties = None
 
         # configure settings
-        self.__multithreading = multithreading
         for key in settings:
             self.__settings[key] = settings[key]
         
-    def load_slide(self, paths: Union[str, list[str]]) -> None:
+    def load_slide(self, paths: Union[str, Path, Sequence[Union[str, Path]]]) -> None:
         """
         Load whole slide image slide.
+
         Args:
             path: path to whole slide image.
         """
@@ -645,7 +651,7 @@ class DicomSlideLoader():
             dimensions.append((level.size.height, level.size.width))
 
         # resolution as (x, y) in micrometer / pixel  
-        # dimensions as (row, column) in pixels
+        # dimensions as (height, width) in pixels
         self.__properties = {
             'vendor': pydicom.dcmread(sorted(paths)[0])[0x0008,0x0070].value,
             'native_resolution': (mpp.width, mpp.height), 
@@ -655,8 +661,245 @@ class DicomSlideLoader():
             'dimensions': dimensions,    
         }   
 
-    def get_properties(self) -> dict:
+    def get_properties(self) -> dict[str, Any]:
         return self.__properties
+
+    def get_dimensions(self, magnification: float) -> tuple[int, int]:
+        """
+        Return the dimensions of the whole slide image at the specified magnification.
+        """
+        # determine the best level and correction factor
+        level, correction_factor = self.__best_level_and_correction(magnification)
+        # get the dimensions at the level and apply the correction
+        dimensions = self.__properties['dimensions'][level]
+        corrected_dimensions = (
+            floor(dimensions[0]/correction_factor),
+            floor(dimensions[1]/correction_factor),
+        )
+        return corrected_dimensions
+
+    def __best_level_and_correction(self, magnification: float) -> tuple[float, float]:
+        """
+        Determine the best level of the image pyramid for getting tiles and
+        calculate the correction factor for resizing to the exact magnification.
+        """
+        # check the difference between the requested magnification and 
+        # the magnifications available in the whole slide image
+        differences = []
+        for magnification_level in self.__properties['magnification_levels']:
+            differences.append(magnification-magnification_level)
+
+        # check if the smallest difference can be considered negligible
+        abs_differences = list(map(abs, differences))
+        if min(abs_differences) < self.__settings['max_difference']:
+            level = abs_differences.index(min(abs_differences))
+            correction_factor = 1
+        else:
+            # get the best downsample level for resizing the image
+            # to the desired magnification level
+            level = differences.index(
+                max([diff for diff in differences if diff < 0]),
+            )
+            # calculate the correction factor 
+            correction_factor = (
+                self.__properties['magnification_levels'][level]/magnification
+            )
+
+        return level, correction_factor
+
+    def __read_tile(
+        self, 
+        level: int, 
+        location: tuple[int, int], 
+        shape: tuple[int, int],
+        correction_factor: float,
+    ) -> np.ndarray:
+        """
+        Read a tile from the whole slide image.
+        
+        Args:
+            level: downsample level used for loading the tile.
+            correction_factor: best magnification (to downsample from) divided by 
+                               the specified magnification. 
+            location: location of top left pixel as (x, y) at the specified magnification.
+            shape: shape of tile in pixels as (height, width) at the specified magnification.
+        
+        Returns:
+            tile: whole slide image tile.
+        """
+        # correct the tile location and shape if necessary
+        if correction_factor == 1:
+            corrected_location = location
+            corrected_shape = (shape[1], shape[0])
+        else:
+            corrected_location = (
+                round(location[0]*correction_factor), 
+                round(location[1]*correction_factor),
+            )
+            corrected_shape = (
+                round(shape[1]*correction_factor), 
+                round(shape[0]*correction_factor),
+            )
+
+        # load the image tile at the specified magnification level
+        tile = self.__slide.read_region(
+            location=corrected_location, 
+            level=round(log2(self.__properties['downsample_levels'][level])), 
+            size=corrected_shape,
+        )
+        tile = np.array(tile)[..., 0:3]
+
+        # resize the tile if necessary
+        if correction_factor != 1:
+            tile = resize(
+                image=tile, 
+                output_shape=shape, 
+                anti_aliasing=self.__settings['anti-aliasing'], 
+                order=self.__settings['interpolation_order'],
+            )
+            tile = img_as_ubyte(tile)
+        
+        # remove first axis if necessary
+        if len(tile.shape) == 4:
+            tile = tile[0, ...]
+        
+        return tile
+
+    def get_tile(
+        self, 
+        magnification: float, 
+        location: tuple[int, int],
+        shape: tuple[int, int] = (256, 256), 
+        channels_last: bool = True,
+    ) -> np.ndarray:
+        """
+        Get a tile from the whole slide image based on the specified
+        magnification, location, and shape.
+        
+        Args:
+            magnification: magnification at which the whole slide image is loaded.
+            location: location of top left pixel as (x, y) at the specified magnification.
+            shape: shape of the tile in pixels as (height, width).
+            channels_last: specifies if the channels dimension of the output tensor is last.
+                           if False, the channels dimension is the second dimension.
+        Returns:
+            tile: whole slide image tile [uint8] as (height, width, channel) 
+                  for channels last or (channel, height, width) for channels first.
+        """
+        # the method for getting multiple tiles is used for getting only one tile
+        tile = self.get_tiles(magnification, [location], shape, channels_last)[0]
+        return tile
+
+    def get_tiles(
+        self, 
+        magnification: float, 
+        locations: list[tuple[int, int]],
+        shapes: Union[tuple[int, int], list[tuple[int, int]]] = (256, 256), 
+        channels_last: bool = True,
+    ) -> list[np.ndarray]:
+        """
+        Get one or more tiles from the whole slide image based on the specified 
+        magnification, location, and shape. The tiles are read using multithreading 
+        if this was enabled in the settings.
+
+        Args:
+            magnification: magnification at which the whole slide image is loaded.
+            locations: locations of top left pixel as (x, y) at the specified magnification.
+            shape: shape of the tile in pixels as (height, width).
+            channels_last: specifies if the channels dimension of the output tensor is last.
+                           if False, the channels dimension is the second dimension.
+        Returns:
+            tile: whole slide image tiles [uint8] as (height, width, channel) 
+                  for channels last or (channel, height, width) for channels first.
+        """
+        # check if a slide has been loaded
+        if self.__slide is None:
+            raise ValueError('A slide must be loaded first.')
+        
+        # check if the specified magnification is valid
+        upper_threshold = (self.__properties['native_magnification'] + 
+                           self.__settings['max_difference'])
+        if not (0.0 < magnification <= upper_threshold):
+            message = ('The argument for `magnification` is invalid '
+                       '(`magnification` must be in between 0.0 and '
+                       f'{upper_threshold:0.3f}x).')
+            raise ValueError(message)
+        
+        # determine the best level and correction factor
+        level, correction_factor = self.__best_level_and_correction(magnification)
+        
+        # check if locations is a list 
+        if not isinstance(locations, list):
+            raise TypeError('The argument for `locations` must be a list of tuples.')
+        # check if atleast one position was provided
+        if not len(locations):
+            return []     
+        # check if a single shape was provided 
+        if not isinstance(shapes, list):
+            shapes = [shapes]
+        # if only one shape was provided, duplicate the shape for each location
+        if len(shapes) == 1:
+            shapes *= len(locations)
+        # check if the number of shapes and locations are equal
+        elif len(shapes) != len(locations):
+            raise ValueError('The number of tile shapes and location are unequal.')
+ 
+        # loop over combinations of tile location and shapes
+        tile_iterator = zip(locations, shapes)
+        for location, shape in tile_iterator:
+            # check if the specified tile location and shape are valid
+            dimensions = self.__properties['dimensions'][level]
+            if not (0 <= round(location[0]*correction_factor) <= dimensions[1]):
+                raise ValueError('Top left location is invalid.')
+            if not (0 <= round(location[1]*correction_factor) <= dimensions[0]):
+                raise ValueError('Top left location is invalid.')
+            if not (0 <= round((location[0]+shape[1])*correction_factor) <= dimensions[1]):
+                raise ValueError('Bottom right location is invalid.')
+            if not (0 <= round((location[1]+shape[0])*correction_factor) <= dimensions[0]):
+                raise ValueError('Bottom right location is invalid.')
+
+        # only use multithreading in case of more than one tile
+        N_tiles = len(locations)
+        if self.__settings['multithreading']:
+            # prepare tile reading function for multithreading
+            read_tile = lambda location, shape: self.__read_tile(
+                level=level, 
+                location=location, 
+                shape=shape, 
+                correction_factor=correction_factor, 
+            )
+            # use multithreading for speedup in loading tiles
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                if self.__settings['progress_bar']:
+                    tiles = list(tqdm(
+                        executor.map(read_tile, locations, shapes), 
+                        total=N_tiles,
+                    ))
+                else:
+                    tiles = list(executor.map(read_tile, locations, shapes))
+        else:
+            # define tile iterator
+            tile_iterator = zip(locations, shapes)
+            if self.__settings['progress_bar']:
+                tile_iterator = tqdm(tile_iterator, total=N_tiles)                
+            
+            tiles = []
+            for location, shape in tile_iterator:
+                # load the image tiles at the specified magnification level
+                tiles.append(
+                    self.__read_tile(
+                        level=level, 
+                        location=location, 
+                        shape=shape,
+                        correction_factor=correction_factor,
+                    ),
+                )
+
+        # change position of channels dimension
+        if not channels_last:
+            tiles = [np.transpose(tile, (2,0,1)) for tile in tiles]
+        
+        return tiles
 
     def get_image(
         self, 
@@ -664,317 +907,87 @@ class DicomSlideLoader():
         channels_last: bool = True,
     ) -> np.ndarray:
         """
+        Get the whole slide image at the specified magnification.     
+
         Args:
-            magnification: magnification at which the image is loaded.
+            magnification: magnification at which the whole slide image is loaded.
             channels_last: indicates if the channels dimension should be last.
                            if False, the channels dimension is the second dimension.
         Returns:
-            image: whole slide image [uint8] in grayscale or with RGB color 
-                   channels as (row, column, channel) by default.
-        """
+            image: whole slide image [uint8] as (height, width, channel) 
+                   for channels last or as (channel, height, width) for channels first.
+        """  
         # check if a slide has been loaded
         if self.__slide is None:
             raise ValueError('A slide must be loaded first.')
         
         # check if the specified magnification is valid
-        upper_threshold = (self.__properties['native_magnification'] * 
-            (1+self.__settings['percentual_diff_threshold']))
-        if magnification < 0 or magnification > upper_threshold:
+        upper_threshold = (self.__properties['native_magnification'] + 
+                           self.__settings['max_difference'])
+        if not (0.0 < magnification <= upper_threshold):
             message = ('The argument for `magnification` is invalid '
                        '(`magnification` must be in between 0.0 and '
                        f'{upper_threshold:0.3f}x).')
             raise ValueError(message)
         
-        # check the difference between the requested magnification and 
-        # the magnifications available in the pyramid image
-        percentual_diff = []
-        abs_percentual_diff = []
-        for mag_level in self.__properties['magnification_levels']:
-            percentual_diff.append((magnification-mag_level)/mag_level)
-            abs_percentual_diff.append(abs((magnification-mag_level)/mag_level))
-        
-        # check if the smallest difference can be considered negligible
-        if min(abs_percentual_diff) < self.__settings['percentual_diff_threshold']:
-            level = abs_percentual_diff.index(min(abs_percentual_diff))
-            selected_magnification = magnification
-            correction_factor = 1
-        else:
-            # get the best downsample level for resizing the image 
-            # to the desired magnification level
-            level = percentual_diff.index(max([diff for diff in percentual_diff if diff < 0]))
-            selected_magnification = self.__properties['magnification_levels'][level]
-            correction_factor = magnification/selected_magnification
-        
-        # load the downsampled image from the pyramid representation if available
-        if correction_factor == 1:
+        # determine the best level and correction factor
+        level, correction_factor = self.__best_level_and_correction(magnification)
+
+        # determine the final image size
+        height, width = self.get_dimensions(magnification)
+
+        # check if the magnification value is valid
+        if height <= 0 or width <= 0:
+            raise ValueError('The argument for `magnification` is too small.')
+
+        # load the image from the exact image pyramid level if available
+        if ((magnification < min(self.__properties['magnification_levels'])) or 
+            (correction_factor == 1)):
             # load the entire image at the specified downsample level
             image = self.__slide.read_region(
                 location=(0,0),
-                level=round(math.log2(self.__properties['downsample_levels'][level])), 
+                level=round(log2(self.__properties['downsample_levels'][level])), 
                 size=tuple(list(self.__properties['dimensions'][level][::-1])),
             )
             # remove the alpha channel if present
             image = np.array(image)[..., 0:3]
+
+            # resize the image to the desired shape
+            if magnification < min(self.__properties['magnification_levels']):
+                image = resize(
+                    image=image, 
+                    output_shape=(height, width), 
+                    anti_aliasing=self.__settings['anti-aliasing'], 
+                    order=self.__settings['interpolation_order'],
+                )
+                image = img_as_ubyte(image)
         else:
-            # extract tiles from the image at the requested magnification
-            tiles, information = self.get_tiles(
+            # determine locations and shapes of tiles
+            chunk_shape = self.__settings['chunk_shape']
+            locations = []
+            shapes = []
+            for y in range(ceil(height/chunk_shape[0])):
+                for x in range(ceil(width/chunk_shape[1])):
+                    locations.append((x*chunk_shape[1], y*chunk_shape[0]))
+                    shapes.append((
+                        min(height, (y+1)*chunk_shape[0])-(y*chunk_shape[0]),
+                        min(width, (x+1)*chunk_shape[1])-(x*chunk_shape[1]),
+                    ))
+
+            # get tiles from the image at the requested magnification
+            tiles = self.get_tiles(
                 magnification=magnification, 
-                tile_shape=self.__settings['extraction_tile_shape'],
-                include_partial_tiles=True,
-                overlap=(0,0)
+                locations=locations,
+                shapes=shapes,
             )
-            length_y, length_x = information['tile_shape']
             # stitch the tiles together to obtain full image
-            image = np.zeros((
-                length_y*(information['positions'][-1][0]+1), 
-                length_x*(information['positions'][-1][1]+1), 
-                3), dtype=np.uint8
-            )
+            image = np.zeros((height, width, 3), dtype=np.uint8)
             # add values of tiles to image
-            for i, tile in enumerate(tiles):
-                top_left_x, top_left_y = information['locations'][i]
-                bottom_left_y = top_left_y+length_y
-                top_right_x = top_left_x+length_x
-                image[top_left_y:bottom_left_y, top_left_x:top_right_x] = tile
-            # remove the zero-padding added to partial tiles
-            image = image[
-                :np.count_nonzero(np.sum(image, axis=(1,2))), 
-                :np.count_nonzero(np.sum(image, axis=(0,2))),
-            ]
+            for (x, y), shape, tile in zip(locations, shapes, tiles):
+                image[y:y+shape[0], x:x+shape[1], :] = tile
 
         # change position of channels dimension
         if not channels_last:
             image = np.transpose(image, (2,0,1))
 
-        return image           
-
-    def get_tiles(
-        self, 
-        magnification: float, 
-        tile_shape: tuple = (256, 256), 
-        overlap: tuple = (0.0, 0.0),  
-        channels_last: bool = True,
-        include_partial_tiles: bool = True,
-    ) -> np.ndarray:
-        """
-        Args:
-            magnification: magnification at which the image is loaded.
-            tile_shape: shape of tile in pixels as (row, column).
-            overlap: overlap faction between extracted tiles as (row, column).
-            channels_last: specifies if the channels dimension of the output tensor is last.
-                           if False, the channels dimension is the second dimension.
-            include_partial_tiles: specifies if partial tiles at the border are included.
-        Returns:
-            tiles: whole slide image tiles with RGB color channels as 
-                   (tile, row, column, channel).
-            information: tile information containing the position as (row, column)
-                         and pixel locations of top left corner as (x, y).
-        """
-        # check if a slide has been loaded
-        if self.__slide is None:
-            raise ValueError('A slide must be loaded first.')
-        
-        # check if the specified magnification is valid
-        upper_threshold = (self.__properties['native_magnification'] * 
-            (1+self.__settings['percentual_diff_threshold']))
-        if magnification < 0 or magnification > upper_threshold:
-            message = ('The argument for `magnification` is invalid '
-                       '(`magnification` must be in between 0.0 and '
-                       f'{upper_threshold:0.3f}x).')
-            raise ValueError(message)
-        
-        # check the difference between the requested magnification and 
-        # the magnifications available in the pyramid image
-        percentual_diff = []
-        abs_percentual_diff = []
-        for mag_level in self.__properties['magnification_levels']:
-            percentual_diff.append((magnification-mag_level)/mag_level)
-            abs_percentual_diff.append(abs((magnification-mag_level)/mag_level))
-
-        # check if the smallest difference can be considered negligible
-        if min(abs_percentual_diff) < self.__settings['percentual_diff_threshold']:
-            level = abs_percentual_diff.index(min(abs_percentual_diff))
-            correction_factor = 1
-        else:
-            # get the best downsample level for resizing the image
-            # to the desired magnification level
-            level = percentual_diff.index(max([diff for diff in percentual_diff if diff < 0]))
-            # calculate the correction factor 
-            correction_factor = self.__properties['magnification_levels'][level]/magnification
-        
-        # correct the tile shape if necessary
-        if correction_factor == 1:
-            corrected_tile_shape = tile_shape
-        else:
-            corrected_tile_shape = (
-                tile_shape[0]*correction_factor, 
-                tile_shape[1]*correction_factor,
-            )         
-        # get the image dimensions at the specified magnification level
-        dimensions = self.__properties['dimensions'][level]
-        # calculate the stride for both spatial dimensions
-        stride = (
-            corrected_tile_shape[0]*(1-overlap[0]), 
-            corrected_tile_shape[1]*(1-overlap[1])
-        )
-        # calculate the number of tiles in each row and column
-        if include_partial_tiles:
-            tiles_per_row = ceil(dimensions[0]/stride[0])
-            tiles_per_column = ceil(dimensions[1]/stride[1])
-        else:
-            tiles_per_row = floor((dimensions[0]-corrected_tile_shape[0])/stride[0])
-            tiles_per_column = floor((dimensions[1]-corrected_tile_shape[1])/stride[1])
-        N_tiles = tiles_per_row * tiles_per_column
-       
-        # initialize lists with the position (row, column) 
-        positions = []
-        for row in range(tiles_per_row):
-            for column in range(tiles_per_column):
-                positions.append((row, column))
-        
-        locations = []
-        native_locations = []
-        for position in positions:
-            # add location of the top left pixel (x, y) for all tiles to a list
-            locations.append(
-                (round(position[1]*stride[1]/correction_factor),
-                round(position[0]*stride[0]/correction_factor)),
-            )
-            # add location of the top left pixel (x, y) for all tiles to a list
-            # in the native magnification image
-            native_locations.append(
-                (round(position[1]*stride[1]),
-                round(position[0]*stride[0])),
-            )
-
-        # store tile information in a dictionary 
-        information = {
-            'tile_shape': tile_shape, 
-            'locations': locations, 
-            'positions': positions,
-        }
-
-        if self.__multithreading:
-            # prepare tile reading function for multi-threading
-            read_tile = lambda native_location: self.__read_tile(
-                level=level, 
-                tile_shape=tile_shape, 
-                native_location=native_location, 
-                corrected_tile_shape=corrected_tile_shape, 
-                correction_factor=correction_factor, 
-                add_axis=True,
-            )
-            # use multithreading for speedup in loading tiles
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                # convert the clips to separate frames
-                if self.__settings['progress_bar']:
-                    collected_tiles = tqdm(
-                        executor.map(read_tile, native_locations), 
-                        total=N_tiles,
-                    )
-                else:
-                    collected_tiles = executor.map(read_tile, native_locations)
-                # save retrieved tiles in allocated memory
-                tiles = np.concatenate(list(collected_tiles), axis=0)
-        else:
-            # allocate memory to store tiles in array
-            tiles = np.zeros((N_tiles, tile_shape[0], tile_shape[1], 3), dtype=np.uint8)
-
-            if self.__settings['progress_bar']:
-                tile_iterator = tqdm(range(N_tiles))
-            else:
-                tile_iterator = range(N_tiles)
-
-            for i in tile_iterator:
-                # load the image tile at the specified magnification level
-                tile = self.__read_tile(
-                    level=level, 
-                    tile_shape=tile_shape, 
-                    native_location=native_locations[i], 
-                    corrected_tile_shape=corrected_tile_shape, 
-                    correction_factor=correction_factor,
-                )
-                tiles[i, ...] = tile
-                
-        if self.__settings['inspection_mode']:
-            # allocate memory for creating the inspection image
-            inspection_image = np.zeros((
-                round((tiles_per_row-1)*stride[0]/correction_factor+tile_shape[0]),
-                round((tiles_per_column-1)*stride[1]/correction_factor+tile_shape[1]), 
-                3,
-            ))
-            print('Shape of inspection image: ', inspection_image.shape, '\n')
-
-            for i in range(N_tiles):
-                # retrieve the tile
-                tile = tiles[i, ...] 
-                # retrieve the coordinate of the top left pixel
-                top_left_x, top_left_y = information['locations'][i] 
-                # add the tile to the inspection image
-                inspection_image[top_left_y:top_left_y+tile_shape[0], 
-                                 top_left_x:top_left_x+tile_shape[1], :] += tile
-
-            # show inspection image
-            plt.imshow(inspection_image/np.max(inspection_image, axis=(0,1)))
-            plt.show()   
-
-        # change position of channels dimension
-        if not channels_last:
-            tiles = np.transpose(tiles, (0,3,1,2))
-        
-        return tiles, information
-
-    def __read_tile(
-        self, 
-        level: int, 
-        tile_shape: tuple,
-        native_location: tuple, 
-        corrected_tile_shape: tuple,
-        correction_factor: float,
-        add_axis: bool = False
-    ) -> np.ndarray:
-        """
-        Read tile from pyramid image.
-        
-        Args:
-            native_location: location of top left pixel (x, y) in the native magnification image.
-            level: downsample level used for loading the tile.
-            tile_shape: shape of tile in pixels as (row, column).
-            corrected_tile_shape: shape of tile in the native magnification image in pixels as (row, column).
-            correction_factor: best magnification (to downsample from) divided by the selected magnification. 
-            add_axis: specifies if an additional axis in the first position should be added.
-        Returns:
-            tile: extracted image tile.
-        """
-        # calculate corrections for when the tile exceeds the edge of the image
-        height_correction = max(native_location[1]+round(corrected_tile_shape[0]) -
-            self.__properties['dimensions'][level][0], 0)
-        width_correction = max(native_location[0]+round(corrected_tile_shape[1]) -
-            self.__properties['dimensions'][level][1], 0)
-
-        # load the image tile at the specified magnification level
-        tile = self.__slide.read_region(
-            location=native_location, 
-            level=round(math.log2(self.__properties['downsample_levels'][level])), 
-            size=(
-                round(corrected_tile_shape[1])-width_correction, 
-                round(corrected_tile_shape[0])-height_correction,
-            ),
-        )
-        tile = np.array(tile)[..., 0:3]
-        tile = np.pad(tile, ((0,height_correction), (0,width_correction), (0,0)))
-
-        # resize the tile if necessary
-        if correction_factor != 1:
-            tile = resize(
-                image=tile, 
-                output_shape=tile_shape, 
-                anti_aliasing=self.__settings['anti-aliasing'], 
-                order=self.__settings['interpolation_order'],
-            )
-            tile = img_as_ubyte(tile)
-        # add additional axis in the first position
-        if add_axis:
-            tile = tile[None, ...]
-        
-        return tile
+        return image
