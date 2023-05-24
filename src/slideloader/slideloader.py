@@ -18,19 +18,21 @@ The aim is to provide a unified interface for loading WSIs in DICOM format using
 the wsidicom library and for other formats using the OpenSlide library.
 """
 
-import os
-import pydicom
-import wsidicom
-import numpy as np
 import concurrent.futures
-from tqdm import tqdm
-from pathlib import Path
+import os
 from math import floor, ceil, log2
-from skimage import img_as_ubyte
-from skimage.transform import resize
+from pathlib import Path
 from typing import Any, Union, Sequence
 
-OPENSLIDE_PATH = r'C:\app\openslide-win64-20221111\bin'
+import numpy as np
+import pydicom
+import wsidicom
+from skimage import img_as_ubyte
+from skimage.transform import resize
+from tqdm import tqdm
+
+
+OPENSLIDE_PATH = None
 
 # import openslide
 if hasattr(os, 'add_dll_directory'):
