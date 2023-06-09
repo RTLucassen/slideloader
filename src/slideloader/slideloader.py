@@ -26,6 +26,7 @@ from typing import Any, Union, Sequence
 
 import numpy as np
 import pydicom
+import SimpleITK as sitk
 import wsidicom
 from skimage import img_as_ubyte
 from skimage.transform import resize
@@ -193,6 +194,35 @@ class SlideLoader():
                    for channels last or as (channel, height, width) for channels first.
         """ 
         return self.__loader.get_image(magnification, channels_last)
+
+    def write_image(
+        self, 
+        magnification: float,
+        output_path: Union[Path, str], 
+    ) -> None:
+        """
+        Write a copy of the whole slide image at the specified magnification 
+        to the output_path as a .png or .tif tile.     
+
+        Args:
+            magnification: magnification at which the whole slide image is loaded.
+            output_path: path where image is saved.
+        """ 
+        # get the image
+        image = self.__loader.get_image(
+            magnification=magnification, 
+            channels_last=True,
+        )
+        # check if the shape of the image is valid
+        for length in image.shape:
+            if length <= 0:
+                raise ValueError('Invalid image shape.')
+        # check if the image extensions is valid
+        output_path = Path(output_path)
+        if output_path.suffix.lower() in ['.png', '.tif', '.tiff']:
+            sitk.WriteImage(sitk.GetImageFromArray(image[None, ...]), output_path)
+        else:
+            raise ValueError('Invalid image type.')       
 
 
 class OpenSlideLoader():
