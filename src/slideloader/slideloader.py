@@ -222,7 +222,10 @@ class SlideLoader():
         if output_path.suffix.lower() in ['.png', '.tif', '.tiff']:
             sitk.WriteImage(sitk.GetImageFromArray(image[None, ...]), output_path)
         else:
-            raise ValueError('Invalid image type.')       
+            raise ValueError('Invalid image type.')   
+
+    def close(self):
+        self.__loader.close()
 
 
 class OpenSlideLoader():
@@ -623,6 +626,9 @@ class OpenSlideLoader():
             image = np.transpose(image, (2,0,1))
 
         return image   
+    
+    def close(self):
+        self.__slide.close()
 
 
 class DicomSlideLoader():
@@ -1023,3 +1029,6 @@ class DicomSlideLoader():
             image = np.transpose(image, (2,0,1))
 
         return image
+    
+    def close(self):
+        self.__slide.close()
