@@ -41,19 +41,19 @@ image = loader.get_image(magnification=5.0)
 # get a single tile from the WSI
 tile = loader.get_tile(
     magnification=5.0, 
-    tile_location=(0, 0), 
-    tile_shape=(256, 256),
+    location=(0, 0), 
+    shape=(256, 256),
 ) 
 # get multiple tiles (same size) from the WSI
 tiles = loader.get_tiles(
     magnification=5.0, 
-    tile_location=[(0, 0), (1000, 1000)], 
-    tile_shape=(256, 256),
+    locations=[(0, 0), (1000, 1000)], 
+    shapes=(256, 256),
 ) 
 # get multiple tiles (different sizes) from the WSI
 tiles = loader.get_tiles(
     magnification=5.0, 
-    tile_location=[(0, 0), (1000, 1000)], 
-    tile_shape=[(256, 256), (1024, 256)],
+    locations=[(0, 0), (1000, 1000)], 
+    shapes=[(256, 256), (1024, 256)],
 ) 
 ```
