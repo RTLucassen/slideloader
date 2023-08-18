@@ -63,9 +63,11 @@ class SlideLoader():
 
     def __init__(self, settings: dict[str, Any] = {}) -> None:
         """
+        Initialize SlideLoader instance.
+
         Args:
-            settings: dictionary with names of settings and corresponding values.
-                      default values are used for each setting if unspecified.
+            settings:  Dictionary with names of settings and corresponding values.
+                Default values are used for each setting if unspecified.
         """
         # configure settings
         for key in settings:
@@ -80,12 +82,13 @@ class SlideLoader():
         )
         self.__loader = None
 
+
     def load_slide(self, paths: Union[str, Path, Sequence[Union[str, Path]]]) -> None:
         """
         Load whole slide image.
         
         Args:
-            path: path to whole slide image.
+            path:  Path to whole slide image.
         """
         # format paths
         if isinstance(paths, (str, Path)):
@@ -121,14 +124,17 @@ class SlideLoader():
                 self.__dicomslide_loader.load_slide(paths)
                 self.__loader = self.__dicomslide_loader
 
+
     def get_properties(self) -> dict[str, Any]:
         return self.__loader.get_properties()
-    
+
+
     def get_dimensions(self, magnification: float) -> tuple[int, int]:
         """
         Return the dimensions of the whole slide image at the specified magnification.
         """
         return self.__loader.get_dimensions(magnification)
+
 
     def get_tile(
         self, 
@@ -142,16 +148,18 @@ class SlideLoader():
         magnification, location, and shape.
         
         Args:
-            magnification: magnification at which the whole slide image is loaded.
-            location: location of top left pixel as (x, y) at the specified magnification.
-            shape: shape of the tile in pixels as (height, width).
-            channels_last: specifies if the channels dimension of the output tensor is last.
-                           if False, the channels dimension is the second dimension.
+            magnification:  Magnification at which the whole slide image is loaded.
+            location:  Location of top left pixel as (x, y) at the specified magnification.
+            shape:  Shape of the tile in pixels as (height, width).
+            channels_last:  Specifies if the channels dimension of the output tensor 
+                is last. If False, the channels dimension is the second dimension.
+        
         Returns:
-            tile: whole slide image tile [uint8] as (height, width, channel) 
-                  for channels last or (channel, height, width) for channels first.
+            tile:  Whole slide image tile [uint8] as (height, width, channel) 
+                for channels last or (channel, height, width) for channels first.
         """
         return self.__loader.get_tile(magnification, location, shape, channels_last)
+
 
     def get_tiles(
         self, 
@@ -166,16 +174,18 @@ class SlideLoader():
         if this was enabled in the settings.
 
         Args:
-            magnification: magnification at which the whole slide image is loaded.
-            locations: locations of top left pixel as (x, y) at the specified magnification.
-            shapes: shape of the tiles in pixels as (height, width).
-            channels_last: specifies if the channels dimension of the output tensor is last.
-                           if False, the channels dimension is the second dimension.
+            magnification:  Magnification at which the whole slide image is loaded.
+            locations:  Locations of top left pixel as (x, y) at the specified magnification.
+            shapes:  Shape of the tiles in pixels as (height, width).
+            channels_last:  Specifies if the channels dimension of the output tensor 
+                is last. If False, the channels dimension is the second dimension.
+        
         Returns:
             tile: whole slide image tiles [uint8] as (height, width, channel) 
                   for channels last or (channel, height, width) for channels first.
         """
         return self.__loader.get_tiles(magnification, locations, shapes, channels_last)
+
 
     def get_image(
         self, 
@@ -186,12 +196,13 @@ class SlideLoader():
         Get the whole slide image at the specified magnification.     
 
         Args:
-            magnification: magnification at which the whole slide image is loaded.
-            channels_last: indicates if the channels dimension should be last.
-                           if False, the channels dimension is the second dimension.
+            magnification:  Magnification at which the whole slide image is loaded.
+            channels_last:  Indicates if the channels dimension should be last.
+                If False, the channels dimension is the second dimension.
+        
         Returns:
-            image: whole slide image [uint8] as (height, width, channel) 
-                   for channels last or as (channel, height, width) for channels first.
+            image:  Whole slide image [uint8] as (height, width, channel) 
+                for channels last or as (channel, height, width) for channels first.
         """ 
         return self.__loader.get_image(magnification, channels_last)
 
@@ -205,8 +216,8 @@ class SlideLoader():
         to the output_path as a .png or .tif tile.     
 
         Args:
-            magnification: magnification at which the whole slide image is loaded.
-            output_path: path where image is saved.
+            magnification:  Magnification at which the whole slide image is loaded.
+            output_path:  Path where image is saved.
         """ 
         # get the image
         image = self.__loader.get_image(
@@ -246,8 +257,8 @@ class OpenSlideLoader():
     def __init__(self, settings: dict[str, Any] = {}) -> None:
         """
         Args:
-            settings: dictionary with names of settings and corresponding values.
-                      default values are used for each setting if unspecified.
+            settings:  Dictionary with names of settings and corresponding values.
+                Default values are used for each setting if unspecified.
         """
         # initialize instance attributes
         self.__slide = None
@@ -257,12 +268,13 @@ class OpenSlideLoader():
         for key in settings:
             self.__settings[key] = settings[key]  
 
+
     def load_slide(self, path: Union[str, Path]) -> None:
         """
         Load whole slide image slide.
 
         Args:
-            path: path to whole slide image.
+            path:  Path to whole slide image.
         """
         # initialize instance variable with path to slide and load the slide
         self.__slide = openslide.open_slide(path)
@@ -295,12 +307,21 @@ class OpenSlideLoader():
             'dimensions': dimensions,    
         }   
 
+
     def get_properties(self) -> dict[str, Any]:
         return self.__properties
-    
+
+
     def get_dimensions(self, magnification: float) -> tuple[int, int]:
         """
-        Return the dimensions of the whole slide image at the specified magnification.
+        Get the whole slide image dimensions at a specified magnification.
+
+        Args:
+            magnification:  The magnification factor to get the dimensions for.
+
+        Returns:
+            corrected_dimensions:  Dimensions of the whole slide image at the 
+                specified magnification.
         """
         # determine the best level and correction factor
         level, correction_factor = self.__best_level_and_correction(magnification)
@@ -312,10 +333,20 @@ class OpenSlideLoader():
         )
         return corrected_dimensions
 
-    def __best_level_and_correction(self, magnification: float) -> tuple[float, float]:
+
+    def __best_level_and_correction(self, magnification: float) -> tuple[int, float]:
         """
         Determine the best level of the image pyramid for getting tiles and
         calculate the correction factor for resizing to the exact magnification.
+
+        Args:
+            magnification:  The desired magnification factor.
+        
+        Returns:
+            level:  Index of downsampling level with a magnification factor that
+                is closest but larger than the desired magnification factor.
+            correction_factor:  Magnification factor for the best level to
+                downsample from divided by the desired magnification level.
         """
         # check the difference between the requested magnification and 
         # the magnifications available in the whole slide image
@@ -340,6 +371,7 @@ class OpenSlideLoader():
 
         return level, correction_factor
 
+
     def __read_tile(
         self, 
         level: int, 
@@ -351,14 +383,16 @@ class OpenSlideLoader():
         Read a tile from the whole slide image.
         
         Args:
-            level: downsample level used for loading the tile.
-            correction_factor: best magnification (to downsample from) divided by 
-                               the specified magnification. 
-            native_location: location of top left pixel as (x, y) at the native magnification.
-            shape: shape of tile in pixels as (height, width) at the specified magnification.
+            level:  Downsample level used for loading the tile.
+            correction_factor:  Magnification factor for the best level to
+                downsample from divided by the desired magnification level.
+            native_location:  Location of top left pixel as (x, y) at the 
+                native magnification.
+            shape:  Shape of tile in pixels as (height, width) at the specified 
+                magnification.
 
         Returns:
-            tile: whole slide image tile.
+            tile:  Whole slide image tile.
         """
         # correct the tile shape if necessary
         if correction_factor == 1:
@@ -392,6 +426,7 @@ class OpenSlideLoader():
         
         return tile
 
+
     def get_tile(
         self, 
         magnification: float, 
@@ -404,19 +439,21 @@ class OpenSlideLoader():
         magnification, location, and shape.
         
         Args:
-            magnification: magnification at which the whole slide image is loaded.
-            location: location of top left pixel as (x, y) at the specified magnification.
-            shape: shape of the tile in pixels as (height, width).
-            channels_last: specifies if the channels dimension of the output tensor is last.
-                           if False, the channels dimension is the second dimension.
+            magnification:  Magnification at which the whole slide image is loaded.
+            location:  Location of top left pixel as (x, y) at the specified magnification.
+            shape:  Shape of the tile in pixels as (height, width).
+            channels_last:  Specifies if the channels dimension of the output tensor 
+                is last. If False, the channels dimension is the second dimension.
+        
         Returns:
-            tile: whole slide image tile [uint8] as (height, width, channel) 
-                  for channels last or (channel, height, width) for channels first.
+            tile:  Whole slide image tile [uint8] as (height, width, channel) 
+                for channels last or (channel, height, width) for channels first.
         """
         # the method for getting multiple tiles is used for getting only one tile
         tile = self.get_tiles(magnification, [location], shape, channels_last)[0]
         
         return tile
+
 
     def get_tiles(
         self, 
@@ -431,14 +468,15 @@ class OpenSlideLoader():
         if this was enabled in the settings.
 
         Args:
-            magnification: magnification at which the whole slide image is loaded.
-            locations: locations of top left pixel as (x, y) at the specified magnification.
-            shape: shape of the tile in pixels as (height, width).
-            channels_last: specifies if the channels dimension of the output tensor is last.
-                           if False, the channels dimension is the second dimension.
+            magnification:  Magnification at which the whole slide image is loaded.
+            locations:  Locations of top left pixel as (x, y) at the specified magnification.
+            shape:  Shape of the tile in pixels as (height, width).
+            channels_last:  Specifies if the channels dimension of the output tensor 
+                is last. If False, the channels dimension is the second dimension.
+        
         Returns:
-            tile: whole slide image tiles [uint8] as (height, width, channel) 
-                  for channels last or (channel, height, width) for channels first.
+            tile:  Whole slide image tiles [uint8] as (height, width, channel) 
+                for channels last or (channel, height, width) for channels first.
         """
         # check if a slide has been loaded
         if self.__slide is None:
@@ -537,6 +575,7 @@ class OpenSlideLoader():
 
         return tiles
 
+
     def get_image(
         self, 
         magnification: float, 
@@ -546,12 +585,13 @@ class OpenSlideLoader():
         Get the whole slide image at the specified magnification.        
         
         Args:
-            magnification: magnification at which the whole slide image is loaded.
-            channels_last: indicates if the channels dimension should be last.
-                           if False, the channels dimension is the second dimension.
+            magnification:  Magnification at which the whole slide image is loaded.
+            channels_last:  Indicates if the channels dimension should be last.
+                If False, the channels dimension is the second dimension.
+        
         Returns:
-            image: whole slide image [uint8] as (height, width, channel) 
-                   for channels last or as (channel, height, width) for channels first.
+            image:  Whole slide image [uint8] as (height, width, channel) 
+                for channels last or as (channel, height, width) for channels first.
         """ 
         # check if a slide has been loaded
         if self.__slide is None:
@@ -627,6 +667,7 @@ class OpenSlideLoader():
 
         return image   
     
+
     def close(self):
         self.__slide.close()
 
@@ -649,8 +690,8 @@ class DicomSlideLoader():
     def __init__(self, settings: dict[str, Any] = {}) -> None:
         """
         Args:
-            settings: dictionary with names of settings and corresponding values.
-                      default values are used for each setting if unspecified.
+            settings:  Dictionary with names of settings and corresponding values.
+                Default values are used for each setting if unspecified.
         """
         # initialize instance attributes
         self.__slide = None
@@ -660,12 +701,13 @@ class DicomSlideLoader():
         for key in settings:
             self.__settings[key] = settings[key]
         
+
     def load_slide(self, paths: Union[str, Path, Sequence[Union[str, Path]]]) -> None:
         """
         Load whole slide image slide.
 
         Args:
-            path: path to whole slide image.
+            path:  Path to whole slide image.
         """
         # add path to list
         if isinstance(paths, str):
@@ -699,12 +741,21 @@ class DicomSlideLoader():
             'dimensions': dimensions,    
         }   
 
+
     def get_properties(self) -> dict[str, Any]:
         return self.__properties
+
 
     def get_dimensions(self, magnification: float) -> tuple[int, int]:
         """
         Return the dimensions of the whole slide image at the specified magnification.
+        
+        Args:
+            magnification:  The magnification factor to get the dimensions for.
+
+        Returns:
+            corrected_dimensions:  Dimensions of the whole slide image at the 
+                specified magnification.
         """
         # determine the best level and correction factor
         level, correction_factor = self.__best_level_and_correction(magnification)
@@ -716,10 +767,20 @@ class DicomSlideLoader():
         )
         return corrected_dimensions
 
+
     def __best_level_and_correction(self, magnification: float) -> tuple[float, float]:
         """
         Determine the best level of the image pyramid for getting tiles and
         calculate the correction factor for resizing to the exact magnification.
+        
+        Args:
+            magnification:  The desired magnification factor.
+        
+        Returns:
+            level:  Index of downsampling level with a magnification factor that
+                is closest but larger than the desired magnification factor.
+            correction_factor:  Magnification factor for the best level to
+                downsample from divided by the desired magnification level.
         """
         # check the difference between the requested magnification and 
         # the magnifications available in the whole slide image
@@ -745,6 +806,7 @@ class DicomSlideLoader():
 
         return level, correction_factor
 
+
     def __read_tile(
         self, 
         level: int, 
@@ -756,14 +818,16 @@ class DicomSlideLoader():
         Read a tile from the whole slide image.
         
         Args:
-            level: downsample level used for loading the tile.
-            correction_factor: best magnification (to downsample from) divided by 
-                               the specified magnification. 
-            location: location of top left pixel as (x, y) at the specified magnification.
-            shape: shape of tile in pixels as (height, width) at the specified magnification.
+            level:  Downsample level used for loading the tile.
+            correction_factor:  Magnification factor for the best level to
+                downsample from divided by the desired magnification level.
+            location:  Location of top left pixel as (x, y) at the specified 
+                magnification.
+            shape:  Shape of tile in pixels as (height, width) at the specified 
+                magnification.
         
         Returns:
-            tile: whole slide image tile.
+            tile:  Whole slide image tile.
         """
         # correct the tile location and shape if necessary
         if correction_factor == 1:
@@ -803,6 +867,7 @@ class DicomSlideLoader():
         
         return tile
 
+
     def get_tile(
         self, 
         magnification: float, 
@@ -815,18 +880,20 @@ class DicomSlideLoader():
         magnification, location, and shape.
         
         Args:
-            magnification: magnification at which the whole slide image is loaded.
-            location: location of top left pixel as (x, y) at the specified magnification.
-            shape: shape of the tile in pixels as (height, width).
-            channels_last: specifies if the channels dimension of the output tensor is last.
-                           if False, the channels dimension is the second dimension.
+            magnification:  Magnification at which the whole slide image is loaded.
+            location:  Location of top left pixel as (x, y) at the specified magnification.
+            shape:  Shape of the tile in pixels as (height, width).
+            channels_last:  Specifies if the channels dimension of the output tensor 
+                is last. If False, the channels dimension is the second dimension.
+        
         Returns:
-            tile: whole slide image tile [uint8] as (height, width, channel) 
-                  for channels last or (channel, height, width) for channels first.
+            tile:  Whole slide image tile [uint8] as (height, width, channel) 
+                for channels last or (channel, height, width) for channels first.
         """
         # the method for getting multiple tiles is used for getting only one tile
         tile = self.get_tiles(magnification, [location], shape, channels_last)[0]
         return tile
+
 
     def get_tiles(
         self, 
@@ -841,14 +908,15 @@ class DicomSlideLoader():
         if this was enabled in the settings.
 
         Args:
-            magnification: magnification at which the whole slide image is loaded.
-            locations: locations of top left pixel as (x, y) at the specified magnification.
-            shape: shape of the tile in pixels as (height, width).
-            channels_last: specifies if the channels dimension of the output tensor is last.
-                           if False, the channels dimension is the second dimension.
+            magnification:  Magnification at which the whole slide image is loaded.
+            locations:  Locations of top left pixel as (x, y) at the specified magnification.
+            shape:  Shape of the tile in pixels as (height, width).
+            channels_last:  Specifies if the channels dimension of the output tensor 
+                is last. If False, the channels dimension is the second dimension.
+        
         Returns:
-            tile: whole slide image tiles [uint8] as (height, width, channel) 
-                  for channels last or (channel, height, width) for channels first.
+            tile:  Whole slide image tiles [uint8] as (height, width, channel) 
+                for channels last or (channel, height, width) for channels first.
         """
         # check if a slide has been loaded
         if self.__slide is None:
@@ -939,6 +1007,7 @@ class DicomSlideLoader():
         
         return tiles
 
+
     def get_image(
         self, 
         magnification: float, 
@@ -948,12 +1017,13 @@ class DicomSlideLoader():
         Get the whole slide image at the specified magnification.     
 
         Args:
-            magnification: magnification at which the whole slide image is loaded.
-            channels_last: indicates if the channels dimension should be last.
-                           if False, the channels dimension is the second dimension.
+            magnification:  Magnification at which the whole slide image is loaded.
+            channels_last:  Indicates if the channels dimension should be last.
+                If False, the channels dimension is the second dimension.
+        
         Returns:
-            image: whole slide image [uint8] as (height, width, channel) 
-                   for channels last or as (channel, height, width) for channels first.
+            image:  Whole slide image [uint8] as (height, width, channel) 
+                for channels last or as (channel, height, width) for channels first.
         """  
         # check if a slide has been loaded
         if self.__slide is None:
@@ -1030,5 +1100,6 @@ class DicomSlideLoader():
 
         return image
     
+
     def close(self):
         self.__slide.close()
