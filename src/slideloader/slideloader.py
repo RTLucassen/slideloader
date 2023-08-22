@@ -82,7 +82,6 @@ class SlideLoader():
         )
         self.__loader = None
 
-
     def load_slide(self, paths: Union[str, Path, Sequence[Union[str, Path]]]) -> None:
         """
         Load whole slide image.
@@ -124,17 +123,14 @@ class SlideLoader():
                 self.__dicomslide_loader.load_slide(paths)
                 self.__loader = self.__dicomslide_loader
 
-
     def get_properties(self) -> dict[str, Any]:
         return self.__loader.get_properties()
-
 
     def get_dimensions(self, magnification: float) -> tuple[int, int]:
         """
         Return the dimensions of the whole slide image at the specified magnification.
         """
         return self.__loader.get_dimensions(magnification)
-
 
     def get_tile(
         self, 
@@ -160,7 +156,6 @@ class SlideLoader():
         """
         return self.__loader.get_tile(magnification, location, shape, channels_last)
 
-
     def get_tiles(
         self, 
         magnification: float, 
@@ -185,7 +180,6 @@ class SlideLoader():
                   for channels last or (channel, height, width) for channels first.
         """
         return self.__loader.get_tiles(magnification, locations, shapes, channels_last)
-
 
     def get_image(
         self, 
@@ -268,7 +262,6 @@ class OpenSlideLoader():
         for key in settings:
             self.__settings[key] = settings[key]  
 
-
     def load_slide(self, path: Union[str, Path]) -> None:
         """
         Load whole slide image slide.
@@ -307,10 +300,8 @@ class OpenSlideLoader():
             'dimensions': dimensions,    
         }   
 
-
     def get_properties(self) -> dict[str, Any]:
         return self.__properties
-
 
     def get_dimensions(self, magnification: float) -> tuple[int, int]:
         """
@@ -332,7 +323,6 @@ class OpenSlideLoader():
             floor(dimensions[1]/correction_factor),
         )
         return corrected_dimensions
-
 
     def __best_level_and_correction(self, magnification: float) -> tuple[int, float]:
         """
@@ -370,7 +360,6 @@ class OpenSlideLoader():
             )
 
         return level, correction_factor
-
 
     def __read_tile(
         self, 
@@ -426,7 +415,6 @@ class OpenSlideLoader():
         
         return tile
 
-
     def get_tile(
         self, 
         magnification: float, 
@@ -453,7 +441,6 @@ class OpenSlideLoader():
         tile = self.get_tiles(magnification, [location], shape, channels_last)[0]
         
         return tile
-
 
     def get_tiles(
         self, 
@@ -575,7 +562,6 @@ class OpenSlideLoader():
 
         return tiles
 
-
     def get_image(
         self, 
         magnification: float, 
@@ -667,7 +653,6 @@ class OpenSlideLoader():
 
         return image   
     
-
     def close(self):
         self.__slide.close()
 
@@ -700,7 +685,6 @@ class DicomSlideLoader():
         # configure settings
         for key in settings:
             self.__settings[key] = settings[key]
-        
 
     def load_slide(self, paths: Union[str, Path, Sequence[Union[str, Path]]]) -> None:
         """
@@ -741,10 +725,8 @@ class DicomSlideLoader():
             'dimensions': dimensions,    
         }   
 
-
     def get_properties(self) -> dict[str, Any]:
         return self.__properties
-
 
     def get_dimensions(self, magnification: float) -> tuple[int, int]:
         """
@@ -766,7 +748,6 @@ class DicomSlideLoader():
             floor(dimensions[1]/correction_factor),
         )
         return corrected_dimensions
-
 
     def __best_level_and_correction(self, magnification: float) -> tuple[float, float]:
         """
@@ -805,7 +786,6 @@ class DicomSlideLoader():
             )
 
         return level, correction_factor
-
 
     def __read_tile(
         self, 
@@ -867,7 +847,6 @@ class DicomSlideLoader():
         
         return tile
 
-
     def get_tile(
         self, 
         magnification: float, 
@@ -893,7 +872,6 @@ class DicomSlideLoader():
         # the method for getting multiple tiles is used for getting only one tile
         tile = self.get_tiles(magnification, [location], shape, channels_last)[0]
         return tile
-
 
     def get_tiles(
         self, 
@@ -1007,7 +985,6 @@ class DicomSlideLoader():
         
         return tiles
 
-
     def get_image(
         self, 
         magnification: float, 
@@ -1100,6 +1077,5 @@ class DicomSlideLoader():
 
         return image
     
-
     def close(self):
         self.__slide.close()
