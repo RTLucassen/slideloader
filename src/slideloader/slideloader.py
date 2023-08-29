@@ -694,7 +694,7 @@ class DicomSlideLoader():
             path:  Path to whole slide image.
         """
         # add path to list
-        if isinstance(paths, str):
+        if isinstance(paths, (str, Path)):
             paths = [paths]
         # initialize instance variable with path to slide and load the slide
         self.__slide = wsidicom.WsiDicom.open(paths)
@@ -809,43 +809,57 @@ class DicomSlideLoader():
         Returns:
             tile:  Whole slide image tile.
         """
-        # correct the tile location and shape if necessary
-        if correction_factor == 1:
-            corrected_location = location
-            corrected_shape = (shape[1], shape[0])
-        else:
-            corrected_location = (
-                round(location[0]*correction_factor), 
-                round(location[1]*correction_factor),
+        read_settings = [(level, correction_factor)]
+        for fallback_level in list(range(level))[::-1]:
+            fallback_factor = (
+                self.__properties['magnification_levels'][fallback_level]
+                / self.__properties['magnification_levels'][level] 
+                * correction_factor
             )
-            corrected_shape = (
-                round(shape[1]*correction_factor), 
-                round(shape[0]*correction_factor),
-            )
-
-        # load the image tile at the specified magnification level
-        tile = self.__slide.read_region(
-            location=corrected_location, 
-            level=round(log2(self.__properties['downsample_levels'][level])), 
-            size=corrected_shape,
-        )
-        tile = np.array(tile)[..., 0:3]
-
-        # resize the tile if necessary
-        if correction_factor != 1:
-            tile = resize(
-                image=tile, 
-                output_shape=shape, 
-                anti_aliasing=self.__settings['anti-aliasing'], 
-                order=self.__settings['interpolation_order'],
-            )
-            tile = img_as_ubyte(tile)
+            read_settings.append((fallback_level, fallback_factor))
         
-        # remove first axis if necessary
-        if len(tile.shape) == 4:
-            tile = tile[0, ...]
+        for level, correction_factor in read_settings:
+            # correct the tile location and shape if necessary
+            if correction_factor == 1:
+                corrected_location = location
+                corrected_shape = (shape[1], shape[0])
+            else:
+                corrected_location = (
+                    round(location[0]*correction_factor), 
+                    round(location[1]*correction_factor),
+                )
+                corrected_shape = (
+                    round(shape[1]*correction_factor), 
+                    round(shape[0]*correction_factor),
+                )
+            # load the image tile at the specified magnification level
+            try:
+                tile = self.__slide.read_region(
+                    location=corrected_location, 
+                    level=round(log2(self.__properties['downsample_levels'][level])), 
+                    size=corrected_shape,
+                )
+            except wsidicom.errors.WsiDicomFileError as error:
+                continue
+            else:
+                tile = np.array(tile)[..., 0:3]
+                # resize the tile if necessary
+                if correction_factor != 1:
+                    tile = resize(
+                        image=tile, 
+                        output_shape=shape, 
+                        anti_aliasing=self.__settings['anti-aliasing'], 
+                        order=self.__settings['interpolation_order'],
+                    )
+                    tile = img_as_ubyte(tile)
+                
+                # remove first axis if necessary
+                if len(tile.shape) == 4:
+                    tile = tile[0, ...]
+            
+                return tile
         
-        return tile
+        raise error
 
     def get_tile(
         self, 
@@ -901,8 +915,8 @@ class DicomSlideLoader():
             raise ValueError('A slide must be loaded first.')
         
         # check if the specified magnification is valid
-        upper_threshold = (self.__properties['native_magnification'] + 
-                           self.__settings['max_difference'])
+        upper_threshold = (self.__properties['native_magnification'] 
+                           + self.__settings['max_difference'])
         if not (0.0 < magnification <= upper_threshold):
             message = ('The argument for `magnification` is invalid '
                        '(`magnification` must be in between 0.0 and '
@@ -910,7 +924,7 @@ class DicomSlideLoader():
             raise ValueError(message)
         
         # determine the best level and correction factor
-        level, correction_factor = self.__best_level_and_correction(magnification)
+        best_level, best_correction_factor = self.__best_level_and_correction(magnification)
         
         # check if locations is a list 
         if not isinstance(locations, list):
@@ -932,14 +946,14 @@ class DicomSlideLoader():
         tile_iterator = zip(locations, shapes)
         for location, shape in tile_iterator:
             # check if the specified tile location and shape are valid
-            dimensions = self.__properties['dimensions'][level]
-            if not (0 <= round(location[0]*correction_factor) <= dimensions[1]):
+            dimensions = self.__properties['dimensions'][best_level]
+            if not (0 <= round(location[0]*best_correction_factor) <= dimensions[1]):
                 raise ValueError('Top left location is invalid.')
-            if not (0 <= round(location[1]*correction_factor) <= dimensions[0]):
+            if not (0 <= round(location[1]*best_correction_factor) <= dimensions[0]):
                 raise ValueError('Top left location is invalid.')
-            if not (0 <= round((location[0]+shape[1])*correction_factor) <= dimensions[1]):
+            if not (0 <= round((location[0]+shape[1])*best_correction_factor) <= dimensions[1]):
                 raise ValueError('Bottom right location is invalid.')
-            if not (0 <= round((location[1]+shape[0])*correction_factor) <= dimensions[0]):
+            if not (0 <= round((location[1]+shape[0])*best_correction_factor) <= dimensions[0]):
                 raise ValueError('Bottom right location is invalid.')
 
         # only use multithreading in case of more than one tile
@@ -947,10 +961,10 @@ class DicomSlideLoader():
         if self.__settings['multithreading']:
             # prepare tile reading function for multithreading
             read_tile = lambda location, shape: self.__read_tile(
-                level=level, 
+                level=best_level, 
                 location=location, 
                 shape=shape, 
-                correction_factor=correction_factor, 
+                correction_factor=best_correction_factor, 
             )
             # use multithreading for speedup in loading tiles
             with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -972,10 +986,10 @@ class DicomSlideLoader():
                 # load the image tiles at the specified magnification level
                 tiles.append(
                     self.__read_tile(
-                        level=level, 
+                        level=best_level, 
                         location=location, 
                         shape=shape,
-                        correction_factor=correction_factor,
+                        correction_factor=best_correction_factor,
                     ),
                 )
 
@@ -1007,8 +1021,8 @@ class DicomSlideLoader():
             raise ValueError('A slide must be loaded first.')
         
         # check if the specified magnification is valid
-        upper_threshold = (self.__properties['native_magnification'] + 
-                           self.__settings['max_difference'])
+        upper_threshold = (self.__properties['native_magnification'] 
+                           + self.__settings['max_difference'])
         if not (0.0 < magnification <= upper_threshold):
             message = ('The argument for `magnification` is invalid '
                        '(`magnification` must be in between 0.0 and '
@@ -1026,27 +1040,35 @@ class DicomSlideLoader():
             raise ValueError('The argument for `magnification` is too small.')
 
         # load the image from the exact image pyramid level if available
-        if ((magnification < min(self.__properties['magnification_levels'])) or 
-            (correction_factor == 1)):
+        read_tiles = True
+        if ((magnification < min(self.__properties['magnification_levels'])) 
+            or (correction_factor == 1)):
             # load the entire image at the specified downsample level
-            image = self.__slide.read_region(
-                location=(0,0),
-                level=round(log2(self.__properties['downsample_levels'][level])), 
-                size=tuple(list(self.__properties['dimensions'][level][::-1])),
-            )
-            # remove the alpha channel if present
-            image = np.array(image)[..., 0:3]
-
-            # resize the image to the desired shape
-            if magnification < min(self.__properties['magnification_levels']):
-                image = resize(
-                    image=image, 
-                    output_shape=(height, width), 
-                    anti_aliasing=self.__settings['anti-aliasing'], 
-                    order=self.__settings['interpolation_order'],
+            try:
+                image = self.__slide.read_region(
+                    location=(0,0),
+                    level=round(log2(self.__properties['downsample_levels'][level])), 
+                    size=tuple(list(self.__properties['dimensions'][level][::-1])),
                 )
-                image = img_as_ubyte(image)
-        else:
+            except wsidicom.errors.WsiDicomFileError:
+                pass
+            else:
+                # remove the alpha channel if present
+                image = np.array(image)[..., 0:3]
+
+                # resize the image to the desired shape
+                if magnification < min(self.__properties['magnification_levels']):
+                    image = resize(
+                        image=image, 
+                        output_shape=(height, width), 
+                        anti_aliasing=self.__settings['anti-aliasing'], 
+                        order=self.__settings['interpolation_order'],
+                    )
+                    image = img_as_ubyte(image)
+                
+                read_tiles = False
+        
+        if read_tiles:
             # determine locations and shapes of tiles
             chunk_shape = self.__settings['chunk_shape']
             locations = []
