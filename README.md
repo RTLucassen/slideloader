@@ -33,7 +33,7 @@ loader.load_slide(path)
 properties = loader.get_properties()
 
 # get the dimensions of the WSI (in pixels)
-properties = loader.get_dimensions(magnification=5.0)
+dimensions = loader.get_dimensions(magnification=5.0)
 
 # get the WSI
 image = loader.get_image(magnification=5.0)
