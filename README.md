@@ -1,5 +1,5 @@
 # SlideLoader
-*SlideLoader* is a Python package for loading whole slide images (WSIs) and reading tiles. 
+*SlideLoader* is a Python 3.9+ package for loading whole slide images (WSIs) and reading tiles. 
 The aim is to provide a unified interface for loading WSIs in DICOM format using 
 the [wsidicom](https://github.com/imi-bigpicture/wsidicom) library and for other 
 formats using the [OpenSlide](https://github.com/openslide) library.
