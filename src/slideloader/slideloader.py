@@ -132,6 +132,22 @@ class SlideLoader():
         """
         return self.__loader.get_dimensions(magnification)
 
+    def _best_level_and_correction(self, magnification: float) -> tuple[int, float]:
+        """
+        Determine the best level of the image pyramid for getting tiles and
+        calculate the correction factor for resizing to the exact magnification.
+
+        Args:
+            magnification:  The desired magnification factor.
+        
+        Returns:
+            level:  Index of downsampling level with a magnification factor that
+                is closest but larger than the desired magnification factor.
+            correction_factor:  Magnification factor for the best level to
+                downsample from divided by the desired magnification level.
+        """
+        return self.__loader._best_level_and_correction(magnification)
+
     def get_tile(
         self, 
         magnification: float, 
