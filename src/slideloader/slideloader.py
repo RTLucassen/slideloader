@@ -315,7 +315,7 @@ class OpenSlideLoader():
                 specified magnification.
         """
         # determine the best level and correction factor
-        level, correction_factor = self.__best_level_and_correction(magnification)
+        level, correction_factor = self._best_level_and_correction(magnification)
         # get the dimensions at the level and apply the correction
         dimensions = self.__properties['dimensions'][level]
         corrected_dimensions = (
@@ -324,7 +324,7 @@ class OpenSlideLoader():
         )
         return corrected_dimensions
 
-    def __best_level_and_correction(self, magnification: float) -> tuple[int, float]:
+    def _best_level_and_correction(self, magnification: float) -> tuple[int, float]:
         """
         Determine the best level of the image pyramid for getting tiles and
         calculate the correction factor for resizing to the exact magnification.
@@ -479,7 +479,7 @@ class OpenSlideLoader():
             raise ValueError(message)
         
         # determine the best level and correction factor
-        level, correction_factor = self.__best_level_and_correction(magnification)
+        level, correction_factor = self._best_level_and_correction(magnification)
 
         # check if locations is a list 
         if not isinstance(locations, list):
@@ -593,7 +593,7 @@ class OpenSlideLoader():
             raise ValueError(message)
         
         # determine the best level and correction factor
-        level, correction_factor = self.__best_level_and_correction(magnification)
+        level, correction_factor = self._best_level_and_correction(magnification)
 
         # determine the final image size
         height, width = self.get_dimensions(magnification)
@@ -740,7 +740,7 @@ class DicomSlideLoader():
                 specified magnification.
         """
         # determine the best level and correction factor
-        level, correction_factor = self.__best_level_and_correction(magnification)
+        level, correction_factor = self._best_level_and_correction(magnification)
         # get the dimensions at the level and apply the correction
         dimensions = self.__properties['dimensions'][level]
         corrected_dimensions = (
@@ -749,7 +749,7 @@ class DicomSlideLoader():
         )
         return corrected_dimensions
 
-    def __best_level_and_correction(self, magnification: float) -> tuple[float, float]:
+    def _best_level_and_correction(self, magnification: float) -> tuple[float, float]:
         """
         Determine the best level of the image pyramid for getting tiles and
         calculate the correction factor for resizing to the exact magnification.
@@ -924,7 +924,7 @@ class DicomSlideLoader():
             raise ValueError(message)
         
         # determine the best level and correction factor
-        best_level, best_correction_factor = self.__best_level_and_correction(magnification)
+        best_level, best_correction_factor = self._best_level_and_correction(magnification)
         
         # check if locations is a list 
         if not isinstance(locations, list):
@@ -1030,7 +1030,7 @@ class DicomSlideLoader():
             raise ValueError(message)
         
         # determine the best level and correction factor
-        level, correction_factor = self.__best_level_and_correction(magnification)
+        level, correction_factor = self._best_level_and_correction(magnification)
 
         # determine the final image size
         height, width = self.get_dimensions(magnification)
