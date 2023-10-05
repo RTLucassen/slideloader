@@ -631,7 +631,7 @@ class OpenSlideLoader():
             image = np.array(image)[..., 0:3]
 
             # resize the image to the desired shape
-            if magnification < min(self.__properties['magnification_levels']):
+            if correction_factor != 1:
                 image = resize(
                     image=image, 
                     output_shape=(height, width), 
@@ -1073,7 +1073,7 @@ class DicomSlideLoader():
                 image = np.array(image)[..., 0:3]
 
                 # resize the image to the desired shape
-                if magnification < min(self.__properties['magnification_levels']):
+                if correction_factor != 1:
                     image = resize(
                         image=image, 
                         output_shape=(height, width), 
