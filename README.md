@@ -19,7 +19,8 @@ OPENSLIDE_PATH = r'C:\Users\user\path\to\openslide-win64-20221111\bin'
 
 ## Example
 A minimal example of how *SlideLoader* can be used for loading WSIs.
-```
+
+```python
 from slideloader import SlideLoader
 
 # initialize SlideLoader instance
